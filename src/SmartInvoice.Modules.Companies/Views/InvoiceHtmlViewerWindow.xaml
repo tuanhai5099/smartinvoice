@@ -1,0 +1,48 @@
+<Window x:Class="SmartInvoice.Modules.Companies.Views.InvoiceHtmlViewerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Xem hóa đơn" Height="700" Width="900"
+        WindowStartupLocation="CenterScreen"
+        Language="vi-VN">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Border Grid.Row="0" Padding="8,6"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="PathText" Grid.Column="0"
+                           Text="" FontSize="12"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding Text, ElementName=PathText}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="BackToViewButton"
+                            Content="Quay lại xem hóa đơn"
+                            Margin="8,0,0,0"
+                            Padding="10,4"
+                            Visibility="Collapsed"
+                            Click="BackToViewButton_Click" />
+                    <Button x:Name="PrintButton"
+                            Content="In"
+                            Margin="8,0,0,0"
+                            Padding="10,4"
+                            Click="PrintButton_Click" />
+                    <Button x:Name="SavePdfButton"
+                            Content="Lưu PDF"
+                            Margin="4,0,0,0"
+                            Padding="10,4"
+                            Click="SavePdfButton_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <wv2:WebView2 x:Name="WebView" Grid.Row="1" />
+    </Grid>
+</Window>

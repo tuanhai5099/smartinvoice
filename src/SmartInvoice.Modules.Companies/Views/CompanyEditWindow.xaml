@@ -1,0 +1,190 @@
+<ui:FluentWindow x:Class="SmartInvoice.Modules.Companies.Views.CompanyEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:conv="clr-namespace:SmartInvoice.Modules.Companies.Converters"
+        Title="{Binding WindowTitle}"
+        Width="440" MinWidth="380" MinHeight="280" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica">
+    <ui:FluentWindow.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+        <!-- PasswordBox: padding trong tối thiểu để ký tự (dấu chấm) hiển thị hết -->
+        <Style x:Key="SiPasswordBoxStyle" TargetType="PasswordBox">
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="{DynamicResource SiCardBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SiCardBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource SiTextPrimary}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource SiTextPrimary}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="PasswordBox">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                          VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                                          VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Hidden" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <!-- Cùng style focus với ui:TextBox: viền 2px accent, Margin -1 để không nhảy layout -->
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource SiAccent}" TargetName="Bd" />
+                                <Setter Property="BorderThickness" Value="2" TargetName="Bd" />
+                                <Setter Property="Margin" Value="-1" TargetName="Bd" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" TargetName="Bd" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPasswordVisible}" Value="False">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </ui:FluentWindow.Resources>
+
+    <Grid>
+        <ui:TitleBar Title="{Binding WindowTitle}" ShowMaximize="False" ShowMinimize="False" />
+
+        <StackPanel Margin="28,40,28,24">
+
+            <!-- Mã công ty (bắt buộc) -->
+            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,5">
+                <Run Text="Mã công ty " />
+                <Run Text="*" Foreground="{DynamicResource SiDanger}" />
+            </TextBlock>
+            <ui:TextBox Text="{Binding CompanyCode, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True}"
+                        MaxLength="30" Margin="0,0,0,14">
+                <ui:TextBox.ToolTip>
+                    <TextBlock Text="Nhập mã công ty (tối đa 30 ký tự)" />
+                </ui:TextBox.ToolTip>
+            </ui:TextBox>
+
+            <!-- MST đăng nhập (bắt buộc) -->
+            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,5">
+                <Run Text="MST (Mã số thuế) " />
+                <Run Text="*" Foreground="{DynamicResource SiDanger}" />
+            </TextBlock>
+            <ui:TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True}"
+                        Margin="0,0,0,14">
+                <ui:TextBox.ToolTip>
+                    <TextBlock Text="Nhập mã số thuế" />
+                </ui:TextBox.ToolTip>
+            </ui:TextBox>
+
+            <!-- Mật khẩu (bắt buộc) -->
+            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,5">
+                <Run Text="Mật khẩu " />
+                <Run Text="*" Foreground="{DynamicResource SiDanger}" />
+            </TextBlock>
+            <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <PasswordBox x:Name="PasswordHidden" Grid.Column="0"
+                             PasswordChanged="PasswordHidden_PasswordChanged"
+                             Style="{StaticResource SiPasswordBoxStyle}" />
+                <ui:TextBox x:Name="PasswordVisible" Grid.Column="0"
+                            Text="{Binding Password, UpdateSourceTrigger=PropertyChanged, ValidatesOnDataErrors=True}"
+                            Margin="0,0,0,0"
+                            Height="36" Padding="6,4" FontSize="13">
+                    <ui:TextBox.Style>
+                        <Style TargetType="ui:TextBox" BasedOn="{StaticResource {x:Type ui:TextBox}}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Setter Property="Height" Value="36" />
+                            <Setter Property="Padding" Value="6,4" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsPasswordVisible}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ui:TextBox.Style>
+                </ui:TextBox>
+                <ui:Button Grid.Column="1" Command="{Binding TogglePasswordVisibilityCommand}"
+                           Appearance="Secondary" Padding="10,8" Margin="8,0,0,0"
+                           ToolTip="Hiện / ẩn mật khẩu" Cursor="Hand">
+                    <ui:Button.Content>
+                        <TextBlock Text="👁" FontSize="16" VerticalAlignment="Center" />
+                    </ui:Button.Content>
+                </ui:Button>
+            </Grid>
+
+            <!-- Chỉ hiện khi sửa -->
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAddMode}" Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+
+                <TextBlock Text="Tên công ty" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SiTextMuted}" Margin="0,0,0,5" />
+                <ui:TextBox Text="{Binding CompanyNameDisplay, Mode=OneWay}" IsReadOnly="True" Margin="0,0,0,14" />
+
+                <TextBlock Text="Mã số thuế (hệ thống)" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{DynamicResource SiTextMuted}" Margin="0,0,0,5" />
+                <ui:TextBox Text="{Binding TaxCodeDisplay, Mode=OneWay}" IsReadOnly="True" Margin="0,0,0,14" />
+            </StackPanel>
+
+            <!-- Status -->
+            <Border Padding="10,8" CornerRadius="6" Margin="0,0,0,12"
+                    Background="{DynamicResource SiAccentLight}"
+                    BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1"
+                    Visibility="{Binding StatusMessage, Converter={StaticResource StringToVisibilityConverter}}">
+                <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" FontSize="13">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StatusIsError}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource SiDanger}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding StatusIsError}" Value="False">
+                                    <Setter Property="Foreground" Value="#2E7D32" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Border>
+
+            <!-- Progress -->
+            <ui:ProgressRing IsIndeterminate="True"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"
+                             Width="26" Height="26" Margin="0,0,0,12" HorizontalAlignment="Center" />
+
+            <!-- Buttons -->
+            <Grid Margin="0,4,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ui:Button Grid.Column="1" Content="Hủy" Command="{Binding CancelCommand}"
+                           Appearance="Secondary" Padding="18,8" FontSize="13" Icon="{ui:SymbolIcon Dismiss24}" />
+                <ui:Button Grid.Column="3" Content="Lưu" Command="{Binding SaveCommand}"
+                           Appearance="Primary" Padding="18,8" FontSize="13" Icon="{ui:SymbolIcon Save24}" />
+            </Grid>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

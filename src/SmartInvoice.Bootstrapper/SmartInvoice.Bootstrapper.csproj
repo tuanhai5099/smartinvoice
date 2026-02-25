@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartInvoice.Bootstrapper</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Prism.DryIoc" Version="9.0.537" />
+    <PackageReference Include="Prism.Wpf" Version="9.0.537" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <ProjectReference Include="..\SmartInvoice.Core\SmartInvoice.Core.csproj" />
+    <ProjectReference Include="..\SmartInvoice.Application\SmartInvoice.Application.csproj" />
+    <ProjectReference Include="..\SmartInvoice.Infrastructure\SmartInvoice.Infrastructure.csproj" />
+    <ProjectReference Include="..\SmartInvoice.InvoicePdfFetchers\SmartInvoice.InvoicePdfFetchers.csproj" />
+    <ProjectReference Include="..\SmartInvoice.UI\SmartInvoice.UI.csproj" />
+    <ProjectReference Include="..\SmartInvoice.Modules.Companies\SmartInvoice.Modules.Companies.csproj" />
+  </ItemGroup>
+</Project>

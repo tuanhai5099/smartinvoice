@@ -1,0 +1,210 @@
+<ui:FluentWindow x:Class="SmartInvoice.Modules.Companies.Views.BackgroundJobCreateWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:conv="clr-namespace:SmartInvoice.Modules.Companies.Converters"
+        xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
+        Title="Thêm job tải nền"
+        Width="520" MinWidth="480" MinHeight="360" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <conv:InverseBooleanConverter x:Key="InverseBool" />
+        <conv:DatePickerDisplayConverter x:Key="DatePickerDisplayConverter" />
+
+        <!-- DatePicker: hiển thị dd/MM/yyyy -->
+        <Style TargetType="{x:Type primitives:DatePickerTextBox}">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type primitives:DatePickerTextBox}">
+                        <TextBox x:Name="PART_TextBox"
+                                 Text="{Binding Path=SelectedDate,
+                                                RelativeSource={RelativeSource AncestorType={x:Type DatePicker}},
+                                                Converter={StaticResource DatePickerDisplayConverter},
+                                                Mode=TwoWay,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Padding="1,0"
+                                 VerticalContentAlignment="Center" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Phân biệt ngày trong tháng hiện tại và ngày tháng khác trong popup Calendar -->
+        <Style x:Key="SiCalendarDayButtonStyle" TargetType="CalendarDayButton">
+            <Setter Property="Foreground" Value="Black" />
+            <Style.Triggers>
+                <!-- Ngày thuộc tháng khác hoặc không hoạt động: mờ đi -->
+                <Trigger Property="IsInactive" Value="True">
+                    <Setter Property="Foreground" Value="#B0B0B0" />
+                </Trigger>
+                <!-- Hôm nay: viền nhấn mạnh -->
+                <Trigger Property="IsToday" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource SiAccent}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SiDatePickerCalendarStyle" TargetType="Calendar">
+            <Setter Property="CalendarDayButtonStyle" Value="{StaticResource SiCalendarDayButtonStyle}" />
+        </Style>
+    </Window.Resources>
+
+    <Grid SnapsToDevicePixels="True">
+        <ui:TitleBar Title="Cấu hình tải HĐ tự động (chạy nền)" ShowMaximize="False" ShowMinimize="False" />
+
+        <StackPanel Margin="28,40,28,24">
+            <!-- Công ty -->
+            <TextBlock Text="Công ty" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource SiTextPrimary}" Margin="0,4,0,4" />
+            <ComboBox ItemsSource="{Binding Companies}"
+                      SelectedValue="{Binding SelectedCompanyId, Mode=TwoWay}"
+                      SelectedValuePath="Id"
+                      Margin="0,0,0,4">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding CompanyCode}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <StackPanel Orientation="Vertical" Margin="0,0,0,10">
+                <TextBlock Text="Tên công ty" FontSize="13" FontWeight="Bold"
+                           Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                <TextBlock Text="{Binding SelectedCompanyName}" FontSize="14" FontWeight="Bold"
+                           Foreground="{DynamicResource SiTextPrimary}"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+
+            <!-- Loại hóa đơn -->
+            <TextBlock Text="Loại hóa đơn" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource SiTextPrimary}" Margin="0,4,0,4" />
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <RadioButton Content="Bán ra" Margin="0,0,12,0"
+                             IsChecked="{Binding IsSold, Mode=TwoWay}" />
+                <RadioButton Content="Mua vào"
+                             IsChecked="{Binding IsSold, Converter={StaticResource InverseBool}, Mode=TwoWay}" />
+            </StackPanel>
+
+            <!-- Khoảng thời gian -->
+            <TextBlock Text="Khoảng thời gian cần tải" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource SiTextPrimary}" Margin="0,4,0,4" />
+            <StackPanel Orientation="Vertical" Margin="0,0,0,10">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <ui:Button x:Name="BtnThangJob" Content="Tháng" Margin="0,0,4,0"
+                               Padding="10,4" FontSize="12"
+                               Click="BtnThangJob_Click" />
+                    <Popup x:Name="PopupThangJob" PlacementTarget="{Binding ElementName=BtnThangJob}" Placement="Bottom" StaysOpen="False"
+                           AllowsTransparency="True" PopupAnimation="Slide">
+                        <Border Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1"
+                                CornerRadius="8" Padding="10" MinWidth="140">
+                            <UniformGrid Columns="3" Rows="4">
+                                <ui:Button Content="T1" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m1" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T2" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m2" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T3" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m3" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T4" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m4" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T5" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m5" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T6" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m6" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T7" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m7" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T8" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m8" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T9" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m9" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T10" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m10" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T11" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m11" Click="MonthJobPresetButton_Click" />
+                                <ui:Button Content="T12" Margin="3" Padding="10,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="m12" Click="MonthJobPresetButton_Click" />
+                            </UniformGrid>
+                        </Border>
+                    </Popup>
+
+                    <ui:Button x:Name="BtnQuyJob" Content="Quý" Margin="0,0,4,0"
+                               Padding="10,4" FontSize="12"
+                               Click="BtnQuyJob_Click" />
+                    <Popup x:Name="PopupQuyJob" PlacementTarget="{Binding ElementName=BtnQuyJob}" Placement="Bottom" StaysOpen="False"
+                           AllowsTransparency="True" PopupAnimation="Slide">
+                        <Border Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1"
+                                CornerRadius="8" Padding="10" MinWidth="180">
+                            <StackPanel>
+                                <ui:Button Content="Quý 1 (T1–T3)" Margin="0,0,0,6" Padding="12,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="q1" Click="QuarterJobPresetButton_Click" />
+                                <ui:Button Content="Quý 2 (T4–T6)" Margin="0,0,0,6" Padding="12,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="q2" Click="QuarterJobPresetButton_Click" />
+                                <ui:Button Content="Quý 3 (T7–T9)" Margin="0,0,0,6" Padding="12,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="q3" Click="QuarterJobPresetButton_Click" />
+                                <ui:Button Content="Quý 4 (T10–T12)" Margin="0,0,0,6" Padding="12,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="q4" Click="QuarterJobPresetButton_Click" />
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+
+                    <ui:Button x:Name="BtnNamJob" Content="Năm" Margin="0,0,4,0"
+                               Padding="10,4" FontSize="12"
+                               Click="BtnNamJob_Click" />
+                    <Popup x:Name="PopupNamJob" PlacementTarget="{Binding ElementName=BtnNamJob}" Placement="Bottom" StaysOpen="False"
+                           AllowsTransparency="True" PopupAnimation="Slide">
+                        <Border Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1"
+                                CornerRadius="8" Padding="10" MinWidth="130">
+                            <StackPanel>
+                                <ui:Button Content="Năm nay" Margin="0,0,0,6" Padding="12,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="thisYear" Click="YearJobPresetButton_Click" />
+                                <ui:Button Content="Năm trước" Padding="12,6" FontSize="12" Command="{Binding SetDatePresetCommand}" CommandParameter="lastYear" Click="YearJobPresetButton_Click" />
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel Orientation="Vertical" Margin="0,0,16,0">
+                        <TextBlock Text="Từ ngày" FontSize="12" Margin="0,0,0,2" />
+                        <DatePicker x:Name="JobFromDatePicker"
+                                    SelectedDate="{Binding FromDate, Mode=TwoWay}"
+                                    DisplayDateStart="{Binding MinJobDate, Mode=OneWay}"
+                                    DisplayDateEnd="{Binding MaxJobDate, Mode=OneWay}"
+                                    Width="140" Height="28"
+                                    VerticalAlignment="Top"
+                                    SnapsToDevicePixels="True"
+                                    Loaded="JobDatePicker_Loaded"
+                                    CalendarStyle="{StaticResource SiDatePickerCalendarStyle}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="Đến ngày" FontSize="12" Margin="0,0,0,2" />
+                        <DatePicker x:Name="JobToDatePicker"
+                                    SelectedDate="{Binding ToDate, Mode=TwoWay}"
+                                    DisplayDateStart="{Binding MinJobDate, Mode=OneWay}"
+                                    DisplayDateEnd="{Binding MaxJobDate, Mode=OneWay}"
+                                    Width="140" Height="28"
+                                    VerticalAlignment="Top"
+                                    SnapsToDevicePixels="True"
+                                    Loaded="JobDatePicker_Loaded"
+                                    CalendarStyle="{StaticResource SiDatePickerCalendarStyle}" />
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Tùy chọn -->
+            <TextBlock Text="Tùy chọn" FontSize="13" FontWeight="SemiBold"
+                       Foreground="{DynamicResource SiTextPrimary}" Margin="0,4,0,4" />
+            <StackPanel Orientation="Vertical" Margin="0,0,0,10">
+                <CheckBox Content="Đồng bộ chi tiết"
+                          IsChecked="{Binding IncludeDetail}" Margin="0,0,0,4" />
+                <CheckBox Content="Kết xuất Excel sau khi đồng bộ"
+                          IsChecked="{Binding ExportExcel}" Margin="0,0,0,4" />
+                <CheckBox Content="Tải hàng loạt XML sau khi đồng bộ"
+                          IsChecked="{Binding DownloadXml}" Margin="0,0,0,4" />
+                <CheckBox Content="Tải hàng loạt PDF sau khi đồng bộ"
+                          IsChecked="{Binding DownloadPdf}" Margin="0,0,0,4" />
+            </StackPanel>
+
+            <!-- Status -->
+            <TextBlock Text="{Binding StatusMessage}" FontSize="12"
+                       Foreground="{DynamicResource SiTextSecondary}" Margin="0,4,0,0"
+                       TextWrapping="Wrap" />
+
+            <!-- Buttons -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <ui:Button Content="Hủy" Command="{Binding CancelCommand}"
+                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                <ui:Button Content="Thực hiện" Command="{Binding CreateJobCommand}"
+                           Appearance="Primary" Padding="12,6" FontSize="12" />
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>
+

@@ -1,0 +1,226 @@
+<UserControl x:Class="SmartInvoice.Modules.Companies.Views.CompaniesListView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:conv="clr-namespace:SmartInvoice.Modules.Companies.Converters"
+             xmlns:controls="clr-namespace:SmartInvoice.Modules.Companies.Controls">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+        <conv:EmptyStringToVisibilityConverter x:Key="EmptyToVisible" />
+        <conv:CompanyCodeNameDisplayConverter x:Key="CompanyCodeNameDisplay" />
+        <!-- TextBox không viền, không line dưới (chỉ còn Border bên ngoài) -->
+        <Style x:Key="NoBorderTextBoxStyle" TargetType="TextBox">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Padding" Value="0,2" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="{DynamicResource SiPageBg}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- HEADER: title | [ô tìm giữa màn hình] | nút Thêm công ty -->
+        <Border Grid.Row="0" Padding="28,14,28,14"
+                Background="{DynamicResource SiHeaderBg}"
+                BorderBrush="{DynamicResource SiHeaderBorder}" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" MinWidth="360" MaxWidth="480" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="Quản lý công ty" FontSize="20" FontWeight="Bold"
+                               Foreground="{DynamicResource SiTextPrimary}" />
+                    <TextBlock Text="Danh sách công ty" FontSize="12"
+                               Foreground="{DynamicResource SiTextMuted}" Margin="0,3,0,0" />
+                </StackPanel>
+
+                <!-- Ô tìm kiếm: TextBox chuẩn WPF (không viền focus vuông), bo tròn, focus chỉ đổi viền ngoài -->
+                <Border Grid.Column="2" Background="{DynamicResource SiCardBg}"
+                        CornerRadius="20" VerticalAlignment="Center" ClipToBounds="True">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="BorderBrush" Value="{DynamicResource SiCardBorder}" />
+                            <Setter Property="BorderThickness" Value="1" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsKeyboardFocused, ElementName=SearchTextBox}" Value="True">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource SiAccent}" />
+                                    <Setter Property="BorderThickness" Value="2" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Grid Margin="8,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ui:SymbolIcon Symbol="Search24" FontSize="16" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource SiTextMuted}" Margin="0,0,8,0" />
+                        <Grid Grid.Column="1">
+                            <TextBlock x:Name="SearchPlaceholder" Text="Tìm kiếm công ty (không cần gõ dấu)..."
+                                       FontSize="13" Foreground="{DynamicResource SiTextMuted}"
+                                       VerticalAlignment="Center" IsHitTestVisible="False"
+                                       Visibility="{Binding SearchText, Converter={StaticResource EmptyToVisible}}" />
+                            <TextBox x:Name="SearchTextBox"
+                                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource NoBorderTextBoxStyle}"
+                                     FontSize="13" VerticalAlignment="Center"
+                                     VerticalContentAlignment="Center" />
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:ProgressRing IsIndeterminate="True"
+                                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"
+                                     Width="18" Height="18" Margin="0,0,10,0" />
+                    <ui:Button Content="Tự động tải HĐ (chạy nền)" Command="{Binding OpenBackgroundJobDialogCommand}"
+                               Appearance="Secondary" Padding="12,8" FontSize="13" Margin="0,0,8,0"
+                               IsEnabled="{Binding HasCompanies}" ToolTip="Bật để phần mềm tự động chạy ngầm, kiểm tra và tải hóa đơn mới từ nhà cung cấp/Tổng cục Thuế mà không ảnh hưởng đến công việc bạn đang làm." />
+                    <ui:Button Content="Quản lý việc chạy nền" Command="{Binding OpenJobManagementCommand}"
+                               Appearance="Secondary" Padding="12,8" FontSize="13" Margin="0,0,8,0"
+                               IsEnabled="{Binding HasCompanies}" ToolTip="Xem và quản lý các công việc đang chạy ngầm" />
+                    <ui:Button Content="Thêm công ty" Command="{Binding AddCommand}" Appearance="Primary"
+                               Icon="{ui:SymbolIcon Add24}" Padding="14,8" FontSize="13" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- CARD LIST: canh trái, từ trên xuống, responsive theo chiều rộng màn hình -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Padding="20,12,20,8"
+                      VerticalContentAlignment="Top" HorizontalContentAlignment="Left">
+            <ItemsControl ItemsSource="{Binding PagedCompanies}"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Top">
+                <ItemsControl.ItemContainerStyle>
+                    <Style TargetType="ContentPresenter">
+                        <Setter Property="HorizontalAlignment" Value="Stretch" />
+                        <Setter Property="VerticalAlignment" Value="Stretch" />
+                    </Style>
+                </ItemsControl.ItemContainerStyle>
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <!-- ResponsiveUniformGrid: tự tính Columns theo chiều rộng viewport và TargetItemWidth,
+                             để mỗi hàng 3–4 card, căng đều theo chiều ngang, không dư khoảng trắng lớn bên phải. -->
+                        <controls:ResponsiveUniformGrid HorizontalAlignment="Stretch"
+                                                        TargetItemWidth="380" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <!-- Card công ty: chiều rộng/chiều cao được WrapPanel đảm bảo đều nhau theo ItemWidth/ItemHeight -->
+                        <Border Margin="8,6,8,6" Background="{DynamicResource SiCardBg}"
+                                BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1"
+                                CornerRadius="10" Padding="20,12,20,6"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.05" Color="#000000" Direction="270" />
+                            </Border.Effect>
+                            <Grid VerticalAlignment="Stretch">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- Header card: Mã Công Ty - Tên Công Ty -->
+                                <TextBlock Grid.Row="0"
+                                           Text="{Binding Converter={StaticResource CompanyCodeNameDisplay}, Mode=OneWay, FallbackValue='Chưa có mã/tên'}"
+                                           FontSize="15" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource SiTextPrimary}"
+                                           TextWrapping="Wrap" VerticalAlignment="Top" />
+
+                                <TextBlock Grid.Row="1" FontSize="13" Foreground="{DynamicResource SiTextSecondary}" Margin="0,4,0,0" VerticalAlignment="Top">
+                                    <Run Text="MST: " FontWeight="Medium" />
+                                    <Run Text="{Binding Username, Mode=OneWay}" />
+                                </TextBlock>
+
+                                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,2,0,0" VerticalAlignment="Top">
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SiTextMuted}" Margin="0,0,20,0">
+                                        <Run Text="Đăng nhập: " />
+                                        <Run Text="{Binding LastLoginAt, StringFormat={}{0:dd/MM/yyyy HH:mm}, TargetNullValue='—', Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock FontSize="12" Foreground="{DynamicResource SiTextMuted}">
+                                        <Run Text="Đồng bộ: " />
+                                        <Run Text="{Binding LastSyncedAt, StringFormat={}{0:dd/MM/yyyy HH:mm}, TargetNullValue='—', Mode=OneWay}" />
+                                    </TextBlock>
+                                </StackPanel>
+
+                                <!-- Hàng co giãn nhỏ: đẩy nút xuống để các card cùng hàng có nút ngang nhau -->
+                                <Border Grid.Row="3" MinHeight="8" />
+
+                                <!-- Hàng action luôn ngang bằng nhau giữa các card -->
+                                <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,6,0,0" VerticalAlignment="Bottom">
+                                    <ui:Button Content="Hóa Đơn"
+                                              Command="{Binding DataContext.SyncInvoicesCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                              CommandParameter="{Binding}" Appearance="Primary"
+                                              Icon="{ui:SymbolIcon ArrowSync24}" ToolTip="Đồng bộ hóa đơn"
+                                              Padding="8,5" FontSize="12" Margin="0,0,8,0" />
+                                    <ui:Button Content="Sửa"
+                                              Command="{Binding DataContext.EditCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                              CommandParameter="{Binding}" Appearance="Secondary"
+                                              Icon="{ui:SymbolIcon Edit24}" ToolTip="Sửa thông tin"
+                                              Padding="10,5" FontSize="12" Margin="0,0,8,0" />
+                                    <ui:Button Content="Xóa"
+                                              Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                              CommandParameter="{Binding}" Appearance="Danger"
+                                              Icon="{ui:SymbolIcon Delete24}" ToolTip="Xóa công ty"
+                                              Padding="10,5" FontSize="12" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- FOOTER: status bar gọn hơn, chiếm ít chiều cao -->
+        <Border Grid.Row="2" Padding="20,6" MinHeight="32"
+                Background="{DynamicResource SiHeaderBg}"
+                BorderBrush="{DynamicResource SiHeaderBorder}" BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" FontSize="12"
+                           Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center"
+                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="48" />
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding PaginationSummary}" FontSize="13" FontWeight="Medium"
+                               Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center"
+                               Margin="0,0,16,0" />
+                    <ui:Button Command="{Binding PreviousPageCommand}"
+                               Appearance="Secondary" Icon="{ui:SymbolIcon ChevronLeft24}"
+                               Padding="8,6" FontSize="12" ToolTip="Trang trước" />
+                    <ui:Button Command="{Binding NextPageCommand}"
+                               Appearance="Secondary" Icon="{ui:SymbolIcon ChevronRight24}"
+                               Padding="8,6" FontSize="12" ToolTip="Trang sau" Margin="6,0,0,0" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

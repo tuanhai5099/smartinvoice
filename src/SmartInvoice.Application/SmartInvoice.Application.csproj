@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SmartInvoice.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\InvoiceTemplate\invoice.html" />
+    <EmbeddedResource Include="Assets\InvoiceTemplate\print-invoice.html" />
+    <EmbeddedResource Include="Assets\InvoiceTemplate\invoice-mau06.html" />
+    <EmbeddedResource Include="Assets\InvoiceTemplate\print-invoice-mau06.html" />
+    <EmbeddedResource Include="Assets\InvoiceTemplate\details.js" />
+    <EmbeddedResource Include="Assets\InvoiceTemplate\viewinvoice-bg.jpg" />
+    <EmbeddedResource Include="Assets\InvoiceTemplate\sign-check.jpg" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SmartInvoice.Core\SmartInvoice.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,151 @@
+<ui:FluentWindow x:Class="SmartInvoice.Modules.Companies.Views.BackgroundJobListWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:converters="clr-namespace:SmartInvoice.Modules.Companies.Converters"
+        xmlns:domain="clr-namespace:SmartInvoice.Core.Domain;assembly=SmartInvoice.Core"
+        Title="Quản lý chạy tự động"
+        Width="1100" Height="680" MinWidth="800" MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica">
+    <Window.Resources>
+        <converters:JobStatusToTextConverter x:Key="JobStatusToText" />
+        <DataTemplate x:Key="JobStatusTemplate">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:ProgressRing x:Name="StatusRing" Width="18" Height="18" IsIndeterminate="True" Visibility="Collapsed" VerticalAlignment="Center" />
+                <TextBlock x:Name="StatusText" Margin="6,0,0,0" VerticalAlignment="Center" Text="{Binding Status, Converter={StaticResource JobStatusToText}}" />
+            </StackPanel>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Status}" Value="{x:Static domain:BackgroundJobStatus.Running}">
+                    <Setter TargetName="StatusRing" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="StatusText" Property="Text" Value="Đang chạy" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="{x:Static domain:BackgroundJobStatus.Pending}">
+                    <Setter TargetName="StatusRing" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="StatusText" Property="Text" Value="Đang chờ" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+    </Window.Resources>
+    <Grid>
+        <ui:TitleBar Title="Quản lý chạy tự động" ShowMaximize="False" ShowMinimize="False" />
+
+        <Grid Margin="20,48,20,20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" MinHeight="140" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="Các job tải nền (đang chạy và gần đây, mới nhất trước)"
+                       FontSize="15" FontWeight="Bold"
+                       Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,12" />
+
+            <Grid Grid.Row="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+            <DataGrid Grid.Row="0" x:Name="JobsGrid"
+                      ItemsSource="{Binding Jobs}"
+                      SelectedItem="{Binding SelectedJob, Mode=TwoWay}"
+                      AutoGenerateColumns="False" IsReadOnly="True"
+                      CanUserAddRows="False" CanUserDeleteRows="False"
+                      SelectionMode="Single" GridLinesVisibility="Horizontal"
+                      HeadersVisibility="Column" Margin="0,0,0,8">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                        <Style.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Công ty" Binding="{Binding CompanyName}" Width="*" MinWidth="100" />
+                    <DataGridTextColumn Header="Mô tả" Binding="{Binding Description}" Width="*" MinWidth="120" />
+                    <DataGridTemplateColumn Header="Trạng thái" Width="120" CellTemplate="{StaticResource JobStatusTemplate}" />
+                    <DataGridTextColumn Header="Tiến trình" Width="180" MinWidth="120"
+                        Binding="{Binding ProgressDisplayText}" />
+                    <DataGridTextColumn Header="Tạo lúc" Binding="{Binding CreatedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}'}" Width="110" />
+                    <DataGridTextColumn Header="Lỗi" Binding="{Binding LastError}" Width="*" MinWidth="80" />
+                </DataGrid.Columns>
+            </DataGrid>
+                <Border Grid.Row="1" Padding="8,6" Margin="0,4,0,0"
+                        Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                        CornerRadius="4">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <TextBlock Text="Trang " VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding CurrentPage}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text=" / " VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding TotalPages}" VerticalAlignment="Center" />
+                        <TextBlock Text="  (tổng " VerticalAlignment="Center" Margin="8,0,0,0" />
+                        <TextBlock Text="{Binding TotalCount}" VerticalAlignment="Center" />
+                        <TextBlock Text=" job)" VerticalAlignment="Center" />
+                        <ui:Button Content="Trước" Command="{Binding PrevPageCommand}" Appearance="Secondary"
+                                   Padding="10,4" FontSize="12" Margin="12,0,0,0" />
+                        <ui:Button Content="Sau" Command="{Binding NextPageCommand}" Appearance="Secondary"
+                                   Padding="10,4" FontSize="12" Margin="4,0,0,0" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Grid.Row="2" Padding="12" Margin="0,0,0,12"
+                    Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                    BorderThickness="1" CornerRadius="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Báo cáo chi tiết job đang chọn" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock Text="Mô tả: " FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding SelectedJob.Description, FallbackValue='—'}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="2" Text="{Binding SelectedJob.ReportSummary, FallbackValue='—'}"
+                               TextWrapping="Wrap" Margin="0,4,0,4" VerticalAlignment="Top" />
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock Text="File kết quả (ZIP/XML/Excel): " FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding SelectedJob.ResultPath, FallbackValue='—'}" TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="380" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedJob.ResultPath}" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock Text="Tạo lúc: " FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding SelectedJob.CreatedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', FallbackValue='—'}" VerticalAlignment="Center" />
+                        <TextBlock Text="   Bắt đầu: " FontWeight="SemiBold" VerticalAlignment="Center" Margin="12,0,0,0" />
+                        <TextBlock Text="{Binding SelectedJob.StartedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', TargetNullValue='—', FallbackValue='—'}" VerticalAlignment="Center" />
+                        <TextBlock Text="   Kết thúc: " FontWeight="SemiBold" VerticalAlignment="Center" Margin="12,0,0,0" />
+                        <TextBlock Text="{Binding SelectedJob.FinishedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', TargetNullValue='—', FallbackValue='—'}" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock Text="Lỗi: " FontWeight="SemiBold" VerticalAlignment="Top" />
+                        <TextBlock Text="{Binding SelectedJob.LastError, FallbackValue='—'}" TextWrapping="Wrap" VerticalAlignment="Top" MaxHeight="36" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,16,0" />
+                <ui:Button Content="Hủy (job chờ)" Command="{Binding CancelCommand}"
+                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                <ui:Button Content="Xóa" Command="{Binding DeleteCommand}"
+                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                <ui:Button Content="Mở thư mục" Command="{Binding OpenFolderCommand}"
+                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                <ui:Button Content="Làm mới" Command="{Binding RefreshCommand}"
+                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                <ui:Button Content="Thử lại (job lỗi)" Command="{Binding RetryCommand}"
+                           Appearance="Secondary" Padding="12,6" FontSize="12" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</ui:FluentWindow>

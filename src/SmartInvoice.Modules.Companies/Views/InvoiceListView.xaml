@@ -1,0 +1,1518 @@
+<UserControl x:Class="SmartInvoice.Modules.Companies.Views.InvoiceListView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:conv="clr-namespace:SmartInvoice.Modules.Companies.Converters"
+             xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
+             xmlns:componentModel="clr-namespace:System.ComponentModel;assembly=System"
+             mc:Ignorable="d"
+             d:DesignWidth="1180"
+             d:DesignHeight="700">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:DatePickerDisplayConverter x:Key="DatePickerDisplayConverter" />
+        <conv:EmptyStringToVisibilityConverter x:Key="EmptyToVisible" />
+        <conv:FilterDirectionToAppearanceConverter x:Key="FilterDirectionToAppearanceConverter" />
+        <conv:FilterTrangThaiToIndexConverter x:Key="FilterTrangThaiToIndexConverter" />
+        <conv:PdfStateIconConverter x:Key="PdfStateIconConverter" />
+        <conv:InvoiceSymbolDisplayConverter x:Key="InvoiceSymbolDisplayConverter" />
+        <conv:UrlToShortDisplayConverter x:Key="UrlToShortDisplayConverter" />
+
+        <!-- Style chung cho ComboBox bộ lọc: hiển thị rõ text được chọn -->
+        <Style x:Key="SiFilterComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{DynamicResource SiTextPrimary}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="6,0" />
+        </Style>
+
+        <!-- TextBlock trong ô DataGrid: căn giữa theo chiều dọc -->
+        <Style x:Key="CenterCellTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- TextBlock trong ô DataGrid có tooltip bằng chính nội dung text (dùng cho cột người bán / người mua) -->
+        <Style x:Key="CenterCellTextWithSelfTooltipStyle"
+               TargetType="TextBlock"
+               BasedOn="{StaticResource CenterCellTextStyle}">
+            <Setter Property="ToolTip">
+                <Setter.Value>
+                    <ToolTip MaxWidth="600"
+                             TextOptions.TextFormattingMode="Display">
+                        <!-- Bind lại vào Text của chính ô TextBlock (PlacementTarget.Text) để tooltip luôn hiện đúng nội dung cell -->
+                        <TextBlock Text="{Binding PlacementTarget.Text, RelativeSource={RelativeSource AncestorType=ToolTip}}"
+                                   TextWrapping="Wrap"
+                                   MaxWidth="580" />
+                    </ToolTip>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- TextBox không viền, dùng chung với màn Công ty -->
+        <Style x:Key="NoBorderTextBoxStyle" TargetType="TextBox">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Padding" Value="0,2" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden"
+                                      VerticalScrollBarVisibility="Hidden" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Cell style phải căn phải cho cột số -->
+        <Style x:Key="RightAlignedCellStyle" TargetType="TextBlock">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="TextAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+        </Style>
+
+        <!-- Hiển thị dd/MM/yyyy trong ô text của DatePicker -->
+        <Style TargetType="{x:Type primitives:DatePickerTextBox}">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type primitives:DatePickerTextBox}">
+                        <TextBox x:Name="PART_TextBox"
+                                 Text="{Binding Path=SelectedDate,
+                                                RelativeSource={RelativeSource AncestorType={x:Type DatePicker}},
+                                                Converter={StaticResource DatePickerDisplayConverter},
+                                                Mode=TwoWay,
+                                                UpdateSourceTrigger=PropertyChanged}"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Padding="1,0"
+                                 VerticalContentAlignment="Center" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Phân biệt ngày trong tháng hiện tại và ngày tháng khác trong popup Calendar -->
+        <Style x:Key="SiCalendarDayButtonStyle" TargetType="CalendarDayButton">
+            <Setter Property="Foreground" Value="Black" />
+            <Style.Triggers>
+                <!-- Ngày thuộc tháng khác hoặc không hoạt động: mờ đi -->
+                <Trigger Property="IsInactive" Value="True">
+                    <Setter Property="Foreground" Value="#B0B0B0" />
+                </Trigger>
+                <!-- Hôm nay: viền nhấn mạnh -->
+                <Trigger Property="IsToday" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource SiAccent}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SiDatePickerCalendarStyle" TargetType="Calendar">
+            <Setter Property="CalendarDayButtonStyle" Value="{StaticResource SiCalendarDayButtonStyle}" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid x:Name="RootGrid" Background="{DynamicResource SiPageBg}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- Header: công ty + nút job -->
+            <RowDefinition Height="Auto" />   <!-- Hàng lọc 1: Hóa đơn + hướng + preset + từ/đến ngày -->
+            <RowDefinition Height="Auto" />   <!-- Hàng lọc 2: trạng thái + loại HĐ + tìm kiếm -->
+            <RowDefinition Height="Auto" />   <!-- Hàng nút thao tác + tổng tiền -->
+            <RowDefinition Height="*" />      <!-- DataGrid -->
+            <RowDefinition Height="Auto" />   <!-- Status bar -->
+        </Grid.RowDefinitions>
+
+        <!-- HEADER: tên công ty đang chọn + nút quay lại + nút job -->
+        <Border Grid.Row="0" Padding="16,10"
+                Background="{DynamicResource SiHeaderBg}"
+                BorderBrush="{DynamicResource SiHeaderBorder}" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:Button Content="← Quay Lại"
+                               Appearance="Secondary"
+                               Padding="10,4"
+                               FontSize="12"
+                               Command="{Binding NavigateBackToCompaniesCommand}"
+                               Margin="0,0,12,0" />
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Text="{Binding CompanyName}" FontSize="16" FontWeight="Bold"
+                                   Foreground="{DynamicResource SiTextPrimary}" />
+                        <TextBlock Text="{Binding CompanyCode}" FontSize="12"
+                                   Foreground="{DynamicResource SiTextMuted}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <ui:Button Content="Tự động tải HĐ (chạy nền)"
+                               Command="{Binding OpenBackgroundJobDialogCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                    <ui:Button Content="Quản lý việc chạy nền"
+                               Command="{Binding OpenJobManagementCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- HÀNG LỌC 1: Hóa đơn + Mua vào / Bán ra + preset + từ/đến ngày -->
+        <Border Grid.Row="1" Padding="16,8"
+                Background="{DynamicResource SiHeaderBg}"
+                BorderBrush="{DynamicResource SiHeaderBorder}" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Nhãn "Hóa đơn" + 2 toggle button Mua vào / Bán ra -->
+                <!-- Nhóm Hóa đơn + Mua vào/Bán ra dạng pill cho rõ ràng -->
+                <Border Grid.Column="0"
+                        Background="{DynamicResource SiCardBg}"
+                        BorderBrush="{DynamicResource SiCardBorder}"
+                        BorderThickness="1"
+                        CornerRadius="18"
+                        Padding="10,4"
+                        Margin="0,0,16,0">
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="Hóa đơn"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiTextPrimary}"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,12,0" />
+                        <UniformGrid Columns="2" VerticalAlignment="Center">
+                            <ui:Button x:Name="RbMuaVao"
+                                       Content="Mua vào"
+                                       Padding="10,4"
+                                       FontSize="12"
+                                       Margin="0,0,4,0"
+                                       Appearance="{Binding FilterDirection, Converter={StaticResource FilterDirectionToAppearanceConverter}, ConverterParameter=MuaVao}"
+                                       Click="RbDirection_Checked" />
+                            <ui:Button x:Name="RbBanRa"
+                                       Content="Bán ra"
+                                       Padding="10,4"
+                                       FontSize="12"
+                                       Margin="4,0,0,0"
+                                       Appearance="{Binding FilterDirection, Converter={StaticResource FilterDirectionToAppearanceConverter}, ConverterParameter=BanRa}"
+                                       Click="RbDirection_Checked" />
+                        </UniformGrid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Bộ lọc preset thời gian + từ ngày / đến ngày -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- Label thời gian lập để người dùng dễ hiểu -->
+                    <TextBlock Text="Thời gian lập"
+                               VerticalAlignment="Center"
+                               Margin="0,0,12,0"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource SiTextPrimary}" />
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <ui:Button x:Name="BtnThang"
+                                   Content="Tháng"
+                                   Padding="10,4"
+                                   FontSize="12"
+                                   Click="BtnThang_Click" />
+                        <Popup x:Name="PopupThang"
+                               PlacementTarget="{Binding ElementName=BtnThang}"
+                               Placement="Bottom"
+                               StaysOpen="False"
+                               AllowsTransparency="True"
+                               PopupAnimation="Slide">
+                            <Border Background="{DynamicResource SiCardBg}"
+                                    BorderBrush="{DynamicResource SiCardBorder}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="10"
+                                    MinWidth="140">
+                                <UniformGrid Columns="3" Rows="4">
+                                    <ui:Button Content="T1" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m1"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T2" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m2"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T3" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m3"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T4" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m4"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T5" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m5"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T6" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m6"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T7" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m7"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T8" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m8"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T9" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m9"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T10" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m10"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T11" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m11"
+                                               Click="MonthPresetButton_Click" />
+                                    <ui:Button Content="T12" Margin="3" Padding="10,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="m12"
+                                               Click="MonthPresetButton_Click" />
+                                </UniformGrid>
+                            </Border>
+                        </Popup>
+
+                        <ui:Button x:Name="BtnQuy"
+                                   Content="Quý"
+                                   Padding="10,4"
+                                   FontSize="12"
+                                   Margin="8,0,0,0"
+                                   Click="BtnQuy_Click" />
+                        <Popup x:Name="PopupQuy"
+                               PlacementTarget="{Binding ElementName=BtnQuy}"
+                               Placement="Bottom"
+                               StaysOpen="False"
+                               AllowsTransparency="True"
+                               PopupAnimation="Slide">
+                            <Border Background="{DynamicResource SiCardBg}"
+                                    BorderBrush="{DynamicResource SiCardBorder}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="10"
+                                    MinWidth="180">
+                                <StackPanel>
+                                    <ui:Button Content="Quý 1 (T1–T3)" Margin="0,0,0,6" Padding="12,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="q1"
+                                               Click="QuarterPresetButton_Click" />
+                                    <ui:Button Content="Quý 2 (T4–T6)" Margin="0,0,0,6" Padding="12,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="q2"
+                                               Click="QuarterPresetButton_Click" />
+                                    <ui:Button Content="Quý 3 (T7–T9)" Margin="0,0,0,6" Padding="12,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="q3"
+                                               Click="QuarterPresetButton_Click" />
+                                    <ui:Button Content="Quý 4 (T10–T12)" Margin="0,0,0,0" Padding="12,6" FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}" CommandParameter="q4"
+                                               Click="QuarterPresetButton_Click" />
+                                </StackPanel>
+                            </Border>
+                        </Popup>
+
+                        <ui:Button x:Name="BtnNam"
+                                   Content="Năm"
+                                   Padding="10,4"
+                                   FontSize="12"
+                                   Margin="8,0,0,0"
+                                   Click="BtnNam_Click" />
+                        <Popup x:Name="PopupNam"
+                               PlacementTarget="{Binding ElementName=BtnNam}"
+                               Placement="Bottom"
+                               StaysOpen="False"
+                               AllowsTransparency="True"
+                               PopupAnimation="Slide">
+                            <Border Background="{DynamicResource SiCardBg}"
+                                    BorderBrush="{DynamicResource SiCardBorder}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="10"
+                                    MinWidth="130">
+        <StackPanel>
+                                    <ui:Button x:Name="BtnNamNay"
+                                               Content="Năm nay"
+                                               Margin="0,0,0,6"
+                                               Padding="12,6"
+                                               FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}"
+                                               CommandParameter="thisYear"
+                                               Click="YearPresetButton_Click" />
+                                    <ui:Button x:Name="BtnNamTruoc"
+                                               Content="Năm trước"
+                                               Padding="12,6"
+                                               FontSize="12"
+                                               Command="{Binding SetDatePresetCommand}"
+                                               CommandParameter="lastYear"
+                                               Click="YearPresetButton_Click" />
+                                </StackPanel>
+                            </Border>
+                        </Popup>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Từ ngày"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,6,0"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                        <DatePicker x:Name="FilterFromDatePicker"
+                                    SelectedDate="{Binding FilterFromDate}"
+                                    DisplayDateStart="{Binding MinFilterDate, Mode=OneWay}"
+                                    DisplayDateEnd="{Binding MaxFilterDate, Mode=OneWay}"
+                                    Height="28"
+                                    Width="110"
+                                    VerticalAlignment="Center"
+                                    FontSize="12"
+                                    Margin="0,0,12,0"
+                                    CalendarStyle="{StaticResource SiDatePickerCalendarStyle}" />
+                        <TextBlock Text="Đến ngày"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,6,0"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                        <DatePicker x:Name="FilterToDatePicker"
+                                    SelectedDate="{Binding FilterToDate}"
+                                    DisplayDateStart="{Binding MinFilterDate, Mode=OneWay}"
+                                    DisplayDateEnd="{Binding MaxFilterDate, Mode=OneWay}"
+                                    Height="28"
+                                    Width="110"
+                                    VerticalAlignment="Center"
+                                    FontSize="12"
+                                    CalendarStyle="{StaticResource SiDatePickerCalendarStyle}" />
+                        <!-- Nhãn thời gian ngay sau Đến ngày để người dùng dễ thấy -->
+                        <TextBlock Text="{Binding FilterDateLabel}"
+                                   VerticalAlignment="Center"
+                                   Margin="12,0,0,0"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- nhãn thời gian (ẩn, đã hiển thị ngay sau Đến ngày) -->
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Visibility="Collapsed">
+                    <TextBlock Text="{Binding FilterDateLabel}"
+                               FontSize="12"
+                               Foreground="{DynamicResource SiTextSecondary}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- HÀNG LỌC 2: trạng thái + loại HĐ + tìm kiếm -->
+        <Border Grid.Row="2" Padding="16,6"
+                Background="{DynamicResource SiHeaderBg}"
+                BorderBrush="{DynamicResource SiHeaderBorder}" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="Trạng thái"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource SiTextPrimary}" />
+                    <ComboBox x:Name="CboTrangThai"
+                              MinWidth="220"
+                              Height="28"
+                              VerticalAlignment="Center"
+                              Style="{StaticResource SiFilterComboBoxStyle}"
+                              SelectedIndex="{Binding FilterTrangThai, Mode=TwoWay, Converter={StaticResource FilterTrangThaiToIndexConverter}}">
+                        <!-- Text khớp với TthaiToDisplay trong InvoiceSyncService -->
+                        <ComboBoxItem Content="Tất cả" />
+                        <ComboBoxItem Content="Mới" />
+                        <ComboBoxItem Content="Thay thế" />
+                        <ComboBoxItem Content="Điều chỉnh" />
+                        <ComboBoxItem Content="Đã bị thay thế" />
+                        <ComboBoxItem Content="Đã bị điều chỉnh" />
+                        <ComboBoxItem Content="Đã hủy" />
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <TextBlock Text="Loại hóa đơn"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource SiTextPrimary}" />
+                    <ComboBox x:Name="CboLoaiHoaDon"
+                              MinWidth="170"
+                              Height="28"
+                              VerticalAlignment="Center"
+                              Style="{StaticResource SiFilterComboBoxStyle}"
+                              SelectedIndex="{Binding FilterLoaiHoaDon, Mode=TwoWay}">
+                        <ComboBoxItem Content="Tất cả" />
+                        <ComboBoxItem Content="Có mã" />
+                        <ComboBoxItem Content="Không mã" />
+                        <ComboBoxItem Content="Máy tính tiền" />
+                        <ComboBoxItem Content="Ngoại tệ" />
+                    </ComboBox>
+                </StackPanel>
+
+                <!-- Ô tìm kiếm + nút Lọc nằm sát nhóm Loại hóa đơn -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
+                    <Border Background="{DynamicResource SiCardBg}"
+                            CornerRadius="20"
+                            VerticalAlignment="Center"
+                            ClipToBounds="True"
+                            Margin="0,0,8,0"
+                            Width="320">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="BorderBrush" Value="{DynamicResource SiCardBorder}" />
+                                <Setter Property="BorderThickness" Value="1" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsKeyboardFocused, ElementName=InvoiceSearchTextBox}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource SiAccent}" />
+                                        <Setter Property="BorderThickness" Value="2" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <Grid Margin="8,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ui:SymbolIcon Symbol="Search24" FontSize="16" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource SiTextMuted}" Margin="0,0,8,0" />
+                            <Grid Grid.Column="1">
+                                <TextBlock x:Name="InvoiceSearchPlaceholder" Text="Tìm ký hiệu, số HĐ, MST, tên người bán..."
+                                           FontSize="13" Foreground="{DynamicResource SiTextMuted}"
+                                           VerticalAlignment="Center" IsHitTestVisible="False"
+                                           Visibility="{Binding SearchText, Converter={StaticResource EmptyToVisible}}" />
+                                <TextBox x:Name="InvoiceSearchTextBox"
+                                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource NoBorderTextBoxStyle}"
+                                         FontSize="13" VerticalAlignment="Center"
+                                         VerticalContentAlignment="Center"
+                                         KeyDown="InvoiceSearchTextBox_KeyDown" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <ui:Button Content="Lọc"
+                               Command="{Binding ApplyFilterCommand}"
+                               Appearance="Primary"
+                               Padding="12,6"
+                               FontSize="12" />
+
+                    <ui:Button Content="Bỏ lọc"
+                               Command="{Binding ClearFiltersCommand}"
+                               Appearance="Secondary"
+                               Padding="12,6"
+                               FontSize="12"
+                               Margin="8,0,0,0"
+                               Visibility="{Binding HasActiveFilter, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- HÀNG NÚT THAO TÁC + TỔNG TIỀN -->
+        <Border Grid.Row="3" Padding="16,6"
+                Background="{DynamicResource SiPageBg}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:Button Content="Đồng bộ"
+                               Command="{Binding SyncCommand}"
+                               Appearance="Primary" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                    <ui:Button Content="Tải Excel tổng hợp"
+                               Command="{Binding ExportExcelTongHopCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                    <ui:Button Content="Tải Excel chi tiết"
+                               Command="{Binding ExportExcelChiTietCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                    <ui:Button Content="Tải XML hàng loạt"
+                               Command="{Binding DownloadAllXmlCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,8,0" />
+                    <ui:Button Content="Tải PDF hàng loạt"
+                               Command="{Binding DownloadAllPdfCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" />
+                </StackPanel>
+
+                <!-- Cột phải: dòng tổng số HĐ + dòng tổng tiền -->
+                <StackPanel Grid.Column="2"
+                            Orientation="Vertical"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Right"
+                            Margin="0,0,0,0">
+                    <!-- Dòng 1: tổng số hóa đơn -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <TextBlock Text="Tổng: "
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                        <TextBlock Text="{Binding TotalCount}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource SiAccent}"
+                                   Margin="0,0,8,0" />
+                        <TextBlock Text="(Có mã: "
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                        <TextBlock Text="{Binding CountCoMa}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource SiAccent}" />
+                        <TextBlock Text=", Không mã: "
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                        <TextBlock Text="{Binding CountKhongMa}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource SiAccent}" />
+                        <TextBlock Text=", Máy tính tiền: "
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                        <TextBlock Text="{Binding CountMayTinhTien}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource SiAccent}" />
+                        <TextBlock Text=")"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}" />
+                    </StackPanel>
+
+                    <!-- Dòng 2: tổng số tiền -->
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                Margin="0,2,0,0">
+                        <TextBlock Text="Chưa thuế:"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}"
+                                   Margin="0,0,4,0" />
+                        <TextBlock Text="{Binding TotalChuaThue, StringFormat='N0'}"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiAccent}"
+                                   Margin="0,0,12,0" />
+                        <TextBlock Text="Tiền thuế:"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}"
+                                   Margin="0,0,4,0" />
+                        <TextBlock Text="{Binding TotalTienThue, StringFormat='N0'}"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiAccent}"
+                                   Margin="0,0,12,0" />
+                        <TextBlock Text="Thành tiền:"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource SiTextSecondary}"
+                                   Margin="0,0,4,0" />
+                        <TextBlock Text="{Binding TotalThanhTien, StringFormat='N0'}"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource SiAccent}" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Hàng 4: DataGrid -->
+        <Grid Grid.Row="4" Margin="16,4,16,0">
+            <DataGrid x:Name="InvoiceDataGrid"
+                      ItemsSource="{Binding InvoicesView}"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      GridLinesVisibility="None"
+                      HeadersVisibility="Column"
+                      AlternationCount="2"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      Sorting="InvoiceDataGrid_Sorting"
+                      MouseDoubleClick="InvoiceDataGrid_MouseDoubleClick"
+                      PreviewMouseRightButtonUp="InvoiceDataGrid_PreviewMouseRightButtonUp">
+                <DataGrid.Resources>
+                    <conv:XmlStateIconConverter x:Key="XmlStateIconConverter" />
+                    <conv:XmlStateToolTipConverter x:Key="XmlStateToolTipConverter" />
+
+                    <!-- Căn giữa theo chiều cao cho toàn bộ cell + bỏ viền đen ô đang focus -->
+                    <Style TargetType="DataGridCell">
+                        <Setter Property="VerticalContentAlignment" Value="Center" />
+                        <Setter Property="Padding" Value="6,2" />
+                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="BorderBrush" Value="Transparent" />
+                    </Style>
+
+                    <!-- Header hiện đại + icon sort ▲▼ khi đang sắp xếp -->
+                    <Style x:Key="InvoiceListHeaderStyle" TargetType="DataGridColumnHeader">
+                        <Setter Property="Background" Value="{DynamicResource SiHeaderBg}" />
+                        <Setter Property="Foreground" Value="{DynamicResource SiTextSecondary}" />
+                        <Setter Property="FontWeight" Value="SemiBold" />
+                        <Setter Property="Padding" Value="10,6" />
+                        <Setter Property="BorderBrush" Value="{DynamicResource SiDivider}" />
+                        <Setter Property="BorderThickness" Value="0,0,0,1" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="DataGridColumnHeader">
+                                    <Border Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}">
+                                        <Grid Margin="0,0,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="18" />
+                                            </Grid.ColumnDefinitions>
+                                            <ContentPresenter Grid.Column="0"
+                                                              VerticalAlignment="Center"
+                                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                              RecognizesAccessKey="True" />
+                                            <!-- Icon sort -->
+                                            <TextBlock x:Name="SortIcon"
+                                                       Grid.Column="1"
+                                                       FontSize="10"
+                                                       VerticalAlignment="Center"
+                                                       HorizontalAlignment="Center"
+                                                       Foreground="{DynamicResource SiTextSecondary}"
+                                                       Visibility="Collapsed" />
+                                        </Grid>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="SortDirection" Value="{x:Static componentModel:ListSortDirection.Ascending}">
+                                            <Setter TargetName="SortIcon" Property="Text" Value="▲" />
+                                            <Setter TargetName="SortIcon" Property="Visibility" Value="Visible" />
+                                            <Setter Property="Foreground" Value="{DynamicResource SiAccent}" />
+                                        </Trigger>
+                                        <Trigger Property="SortDirection" Value="{x:Static componentModel:ListSortDirection.Descending}">
+                                            <Setter TargetName="SortIcon" Property="Text" Value="▼" />
+                                            <Setter TargetName="SortIcon" Property="Visibility" Value="Visible" />
+                                            <Setter Property="Foreground" Value="{DynamicResource SiAccent}" />
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource SiRowHover}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                    <!-- Header căn giữa cho cột số + XML, PDF, Thao tác -->
+                    <Style x:Key="InvoiceListHeaderCenterStyle" TargetType="DataGridColumnHeader" BasedOn="{StaticResource InvoiceListHeaderStyle}">
+                        <Setter Property="HorizontalContentAlignment" Value="Center" />
+                    </Style>
+                </DataGrid.Resources>
+
+                <!-- Áp dụng style header có icon sort -->
+                <DataGrid.ColumnHeaderStyle>
+                    <StaticResource ResourceKey="InvoiceListHeaderStyle" />
+                </DataGrid.ColumnHeaderStyle>
+
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Setter Property="Padding" Value="4,2" />
+                        <Setter Property="Margin" Value="0,2" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="Background" Value="{DynamicResource SiCardBg}" />
+                        <Setter Property="FontSize" Value="12" />
+                        <Style.Triggers>
+                            <!-- Hàng chẵn/lẻ hơi khác màu cho hiện đại -->
+                            <Trigger Property="ItemsControl.AlternationIndex" Value="1">
+                                <Setter Property="Background" Value="#F7F8FC" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource SiRowHover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource SiAccentLight}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+
+                <DataGrid.Columns>
+                    <!-- Ký hiệu / Số HĐ / Ngày: chia tỉ lệ hợp lý, dễ đọc -->
+                    <!-- Ký hiệu: Mẫu số - Ký hiệu (ví dụ: 1-C26TAA) -->
+                    <DataGridTemplateColumn Header="Ký hiệu" Width="90" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock HorizontalAlignment="Left"
+                                           VerticalAlignment="Center">
+                                    <TextBlock.Text>
+                                        <MultiBinding Converter="{StaticResource InvoiceSymbolDisplayConverter}">
+                                            <Binding Path="Khmshdon" />
+                                            <Binding Path="KyHieu" />
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Số HĐ"
+                                        Binding="{Binding SoHoaDon}"
+                                        Width="80"
+                                        ElementStyle="{StaticResource CenterCellTextStyle}" />
+                    <DataGridTextColumn Header="Ngày lập"
+                                        Binding="{Binding NgayLap, StringFormat='dd/MM/yyyy'}"
+                                        Width="90"
+                                        ElementStyle="{StaticResource CenterCellTextStyle}" />
+                    <DataGridTextColumn Header="Ngày ký"
+                                        Binding="{Binding NgayKy, StringFormat='dd/MM/yyyy'}"
+                                        Width="90"
+                                        ElementStyle="{StaticResource CenterCellTextStyle}" />
+
+                    <!-- Thông tin người bán / người mua: Tên công ty (mã số thuế) -->
+                    <DataGridTextColumn
+                        Binding="{Binding CounterpartyDisplay}"
+                        Width="*"
+                        SortMemberPath="CounterpartyName"
+                        ElementStyle="{StaticResource CenterCellTextWithSelfTooltipStyle}">
+                        <DataGridTextColumn.HeaderTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding DataContext.CounterpartyColumnHeader, RelativeSource={RelativeSource AncestorType={x:Type DataGrid}}}"
+                                           VerticalAlignment="Center" />
+                            </DataTemplate>
+                        </DataGridTextColumn.HeaderTemplate>
+                    </DataGridTextColumn>
+
+                    <!-- Cột Trạng thái: hiển thị badge màu theo trạng thái -->
+                    <DataGridTemplateColumn Header="Trạng thái"
+                                            Width="110"
+                                            HeaderStyle="{StaticResource InvoiceListHeaderCenterStyle}">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="12"
+                                        Padding="8,2"
+                                        HorizontalAlignment="Center">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="#E3F2FD" />
+                                            <Setter Property="BorderBrush" Value="#90CAF9" />
+                                            <Setter Property="BorderThickness" Value="1" />
+                                            <Style.Triggers>
+                                                <!-- Mới: xanh -->
+                                                <DataTrigger Binding="{Binding TrangThaiDisplay}" Value="Mới">
+                                                    <Setter Property="Background" Value="#E3F2FD" />
+                                                    <Setter Property="BorderBrush" Value="#64B5F6" />
+                                                </DataTrigger>
+                                                <!-- Đã điều chỉnh: vàng cam -->
+                                                <DataTrigger Binding="{Binding TrangThaiDisplay}" Value="Điều chỉnh">
+                                                    <Setter Property="Background" Value="#FFE082" />
+                                                    <Setter Property="BorderBrush" Value="#FFB300" />
+                                                </DataTrigger>
+                                                <!-- Đã thay thế: cam đậm -->
+                                                <DataTrigger Binding="{Binding TrangThaiDisplay}" Value="Thay thế">
+                                                    <Setter Property="Background" Value="#FFCCBC" />
+                                                    <Setter Property="BorderBrush" Value="#FF7043" />
+                                                </DataTrigger>
+                                                <!-- Đã hủy: đỏ -->
+                                                <DataTrigger Binding="{Binding TrangThaiDisplay}" Value="Đã hủy">
+                                                    <Setter Property="Background" Value="#FFCDD2" />
+                                                    <Setter Property="BorderBrush" Value="#E57373" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="{Binding TrangThaiDisplay}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource SiTextPrimary}"
+                                               VerticalAlignment="Center" />
+                                </Border>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Chưa thuế"
+                                            Width="150"
+                                            HeaderStyle="{StaticResource InvoiceListHeaderCenterStyle}">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Vertical" HorizontalAlignment="Right">
+                                    <TextBlock Text="{Binding Tgtcthue, StringFormat='#,0.###'}"
+                                               Style="{StaticResource RightAlignedCellStyle}" />
+                                    <TextBlock>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsForeignCurrency}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="× " />
+                                        <Run Text="{Binding ExchangeRate, StringFormat='#,0.####'}" />
+                                        <Run Text=" = " />
+                                        <Run Text="{Binding TgtcthueVnd, Mode=OneWay, StringFormat='N0'}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Tiền thuế"
+                                            Width="150"
+                                            HeaderStyle="{StaticResource InvoiceListHeaderCenterStyle}">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Vertical" HorizontalAlignment="Right">
+                                    <TextBlock Text="{Binding Tgtthue, StringFormat='#,0.###'}"
+                                               Style="{StaticResource RightAlignedCellStyle}" />
+                                    <TextBlock>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsForeignCurrency}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="× " />
+                                        <Run Text="{Binding ExchangeRate, StringFormat='#,0.####'}" />
+                                        <Run Text=" = " />
+                                        <Run Text="{Binding TgtthueVnd, Mode=OneWay, StringFormat='N0'}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Thành tiền"
+                                            Width="170"
+                                            HeaderStyle="{StaticResource InvoiceListHeaderCenterStyle}">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Vertical" HorizontalAlignment="Right">
+                                    <TextBlock Text="{Binding TongTien, StringFormat='#,0.###'}"
+                                               Style="{StaticResource RightAlignedCellStyle}" />
+                                    <TextBlock>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsForeignCurrency}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                        <Run Text="× " />
+                                        <Run Text="{Binding ExchangeRate, StringFormat='#,0.####'}" />
+                                        <Run Text=" = " />
+                                        <Run Text="{Binding TongTienVnd, Mode=OneWay, StringFormat='N0'}" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- Cột XML -->
+                    <DataGridTemplateColumn Header="XML" Width="50" IsReadOnly="True" HeaderStyle="{StaticResource InvoiceListHeaderCenterStyle}">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock HorizontalAlignment="Center">
+                                    <TextBlock.Text>
+                                        <MultiBinding Converter="{StaticResource XmlStateIconConverter}">
+                                            <Binding /> <!-- InvoiceDisplayDto -->
+                                            <Binding RelativeSource="{RelativeSource AncestorType=UserControl}" Path="DataContext" />
+                                            <Binding RelativeSource="{RelativeSource AncestorType=UserControl}" Path="DataContext.XmlStateRefreshTrigger" />
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                    <TextBlock.ToolTip>
+                                        <MultiBinding Converter="{StaticResource XmlStateToolTipConverter}">
+                                            <Binding />
+                                            <Binding RelativeSource="{RelativeSource AncestorType=UserControl}" Path="DataContext" />
+                                            <Binding RelativeSource="{RelativeSource AncestorType=UserControl}" Path="DataContext.XmlStateRefreshTrigger" />
+                                        </MultiBinding>
+                                    </TextBlock.ToolTip>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- Cột PDF: ✓ nếu đã có file PDF tải về, trống nếu chưa -->
+                    <DataGridTemplateColumn Header="PDF" Width="50" IsReadOnly="True" HeaderStyle="{StaticResource InvoiceListHeaderCenterStyle}">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock HorizontalAlignment="Center">
+                                    <TextBlock.Text>
+                                        <MultiBinding Converter="{StaticResource PdfStateIconConverter}">
+                                            <Binding /> <!-- InvoiceDisplayDto -->
+                                            <Binding RelativeSource="{RelativeSource AncestorType=DataGrid}" Path="DataContext" />
+                                            <!-- Trigger lại khi PdfStateRefreshTrigger thay đổi -->
+                                            <Binding RelativeSource="{RelativeSource AncestorType=DataGrid}" Path="DataContext.PdfStateRefreshTrigger" />
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- Cột thao tác: nút ... gọi menu hành động -->
+                    <DataGridTemplateColumn Header="Thao tác" Width="72" MinWidth="72" IsReadOnly="True" HeaderStyle="{StaticResource InvoiceListHeaderCenterStyle}">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <ui:Button Background="Transparent"
+                                           BorderBrush="Transparent"
+                                           Padding="4"
+                                           Width="28"
+                                           Height="24"
+                                           Command="{Binding DataContext.OpenRowActionMenuCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding}">
+                                    <ui:SymbolIcon Symbol="MoreVertical24"
+                                                   VerticalAlignment="Center"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{DynamicResource SiTextSecondary}" />
+                                </ui:Button>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <!-- Overlay khi IsBusy -->
+            <Border x:Name="GridOverlay"
+                    Background="#80000000"
+                    Visibility="Collapsed">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <ui:ProgressRing IsIndeterminate="True" Width="40" Height="40" Foreground="White" />
+                    <TextBlock Text="Đang tải..." FontSize="14" Foreground="White" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Hàng 5: Status bar -->
+        <Border Grid.Row="5"
+                Padding="16,3"
+                MinHeight="32"
+                Background="{DynamicResource SiHeaderBg}"
+                BorderBrush="{DynamicResource SiHeaderBorder}"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding StatusMessage}"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource SiTextMuted}"
+                           VerticalAlignment="Center"
+                           MaxHeight="48" />
+
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="16,0,0,0">
+                    <TextBlock Text="XML: " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding CountCoXml, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center" />
+                    <TextBlock Text=" có, " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding CountChuaXml, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center" />
+                    <TextBlock Text=" chưa" FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="  ·  " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="PDF: " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding CountCoPdf, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center" />
+                    <TextBlock Text=" có, " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding CountChuaPdf, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center" />
+                    <TextBlock Text=" chưa" FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="  ·  " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="Ngoại tệ: " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding CountNgoaiTe, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Popup menu thao tác cho từng hóa đơn (nút "...") -->
+        <Popup x:Name="RowActionMenuPopup"
+               AllowsTransparency="True"
+               Placement="MousePoint"
+               StaysOpen="False"
+               IsOpen="{Binding IsActionMenuOpen, Mode=TwoWay}">
+            <Border Background="{DynamicResource SiCardBg}"
+                    BorderBrush="{DynamicResource SiHeaderBorder}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="4">
+                <StackPanel Orientation="Vertical" MinWidth="180">
+                    <TextBlock Text="{Binding ActionMenuInvoice.SoHoaDonDisplay, StringFormat='Hóa đơn {0}'}"
+                               Margin="8,4"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{DynamicResource SiTextSecondary}" />
+                    <Separator Margin="0,2" />
+                    <ui:Button Content="Đồng bộ lại"
+                               Command="{Binding SyncAgainForRowCommand}"
+                               HorizontalAlignment="Stretch"
+                               Padding="8,4"
+                               Margin="0,0,0,2"
+                               FontSize="12" />
+                    <ui:Button Content="Xem hóa đơn"
+                               Command="{Binding ViewInvoiceForRowCommand}"
+                               HorizontalAlignment="Stretch"
+                               Padding="8,4"
+                               Margin="0,0,0,2"
+                               FontSize="12" />
+                    <ui:Button Content="Xem HĐ liên quan"
+                               Command="{Binding ViewRelatedInvoicesForRowCommand}"
+                               HorizontalAlignment="Stretch"
+                               Padding="8,4"
+                               Margin="0,0,0,2"
+                               FontSize="12"
+                               Visibility="{Binding IsActionMenuRelatedVisible, Converter={StaticResource BoolToVis}}" />
+                    <ui:Button Content="Tải / Xem PDF"
+                               Command="{Binding ViewPdfForRowCommand}"
+                               HorizontalAlignment="Stretch"
+                               Padding="8,4"
+                               Margin="0,0,0,2"
+                               FontSize="12" />
+                    <ui:Button Content="Tải / Xem XML"
+                               Command="{Binding DownloadXmlForRowCommand}"
+                               HorizontalAlignment="Stretch"
+                               Padding="8,4"
+                               Margin="0,0,0,2"
+                               FontSize="12" />
+                    <ui:Button Content="Gợi ý tra cứu PDF"
+                               Command="{Binding OpenLookupPopupForRowCommand}"
+                               HorizontalAlignment="Stretch"
+                               Padding="8,4"
+                               Margin="0,0,0,2"
+                               FontSize="12" />
+            </StackPanel>
+            </Border>
+        </Popup>
+
+        <!-- Popup tải XML / tải PDF hàng loạt: tiêu đề và danh sách chi tiết kết quả -->
+        <Popup x:Name="DownloadXmlPopup"
+               AllowsTransparency="True"
+               Placement="Center"
+               PlacementTarget="{Binding ElementName=RootGrid}"
+               IsOpen="{Binding IsDownloadXmlPopupOpen, Mode=TwoWay}">
+            <Border Background="{DynamicResource SiPageBg}"
+                    BorderBrush="{DynamicResource SiHeaderBorder}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="20"
+                    MinWidth="520"
+                    MaxWidth="620"
+                    MaxHeight="520">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Tiêu đề -->
+                    <TextBlock Grid.Row="0" Margin="0,0,0,6" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource SiTextPrimary}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Tải file hóa đơn" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
+                                        <Setter Property="Text" Value="Tải PDF hàng loạt" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- Khi tải PDF: mô tả chức năng + tổng số + progress + indicator đang tải + tổng kết (luôn hiện) -->
+                    <StackPanel Grid.Row="1" Margin="0,0,0,10" Visibility="Collapsed">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,6" TextWrapping="Wrap">
+                            <Run Text="Tải file PDF cho các hóa đơn trong danh sách chưa có PDF (theo từng nhà cung cấp)." />
+                        </TextBlock>
+                        <!-- Tổng số + dòng tóm tắt theo thời gian thực -->
+                        <TextBlock FontSize="13" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,4">
+                            <Run Text="Tổng: " />
+                            <Run Text="{Binding DownloadTotal, Mode=OneWay}" FontWeight="SemiBold" />
+                            <Run Text=" hóa đơn cần tải PDF." />
+                        </TextBlock>
+                        <TextBlock FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,4">
+                            <Run Text="Đã xử lý: " />
+                            <Run Text="{Binding DownloadCurrentIndex, Mode=OneWay}" FontWeight="SemiBold" />
+                            <Run Text=" | Thành công: " />
+                            <Run Text="{Binding DownloadSucceeded, Mode=OneWay}" Foreground="#43A047" FontWeight="SemiBold" />
+                            <Run Text=" | Thất bại: " />
+                            <Run Text="{Binding DownloadFailed, Mode=OneWay}" Foreground="#E53935" FontWeight="SemiBold" />
+                            <Run Text=" | Bỏ qua: " />
+                            <Run Text="{Binding DownloadSkipped, Mode=OneWay}" Foreground="#757575" FontWeight="SemiBold" />
+                        </TextBlock>
+                        <ProgressBar Minimum="0"
+                                    Maximum="{Binding DownloadTotal, Mode=OneWay}"
+                                    Value="{Binding DownloadCurrentIndex, Mode=OneWay}"
+                                    Height="14"
+                                    Margin="0,0,0,6"
+                                    Foreground="{DynamicResource SiAccent}" />
+                        <TextBlock Text="{Binding DownloadXmlProgressText, Mode=OneWay}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiTextPrimary}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,6" />
+                        <!-- Tổng kết (Thành công / Thất bại / Bỏ qua): luôn hiện khi tải PDF, hoặc khi tải XML đã xong -->
+                        <Border Margin="0,6,0,0" Padding="10,8" CornerRadius="6" Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1" Visibility="Collapsed">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsDownloadPdfResults}" Value="False" />
+                                                <Condition Binding="{Binding IsDownloadingXml}" Value="False" />
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </MultiDataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                    <TextBlock Text="Thành công" FontSize="11" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding DownloadSucceeded}" FontSize="22" FontWeight="Bold" Foreground="#43A047" HorizontalAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                                    <TextBlock Text="Thất bại" FontSize="11" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding DownloadFailed}" FontSize="22" FontWeight="Bold" Foreground="#E53935" HorizontalAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                    <TextBlock Text="Bỏ qua (chưa cấu hình)" FontSize="11" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" TextAlignment="Center" />
+                                    <TextBlock Text="{Binding DownloadSkipped}" FontSize="22" FontWeight="Bold" Foreground="#757575" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Trạng thái chung khi tải XML (không phải PDF) -->
+                    <TextBlock Grid.Row="1" Text="{Binding DownloadXmlProgressText}" FontSize="13" Foreground="{DynamicResource SiTextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <!-- Danh sách chi tiết: từng hóa đơn với icon ✓/⊘/✗ -->
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" MaxHeight="300">
+                        <ItemsControl ItemsSource="{Binding DownloadResults}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,6" Padding="10,6" Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1" CornerRadius="4">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="32" />
+                                                <ColumnDefinition Width="140" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding StatusIcon}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="#E53935" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Success}" Value="True">
+                                                                <Setter Property="Foreground" Value="#43A047" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsSkipped}" Value="True">
+                                                                <Setter Property="Foreground" Value="#757575" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding NoXml}" Value="True">
+                                                                <Setter Property="Foreground" Value="#757575" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" Text="{Binding SoHoaDonDisplay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="2" Text="{Binding Message}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                        <ui:Button Content="Đóng"
+                                   Command="{Binding CloseDownloadXmlPopupCommand}"
+                                   Appearance="Secondary"
+                                   Padding="12,6"
+                                   FontSize="12" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Popup>
+
+        <!-- Popup gợi ý tra cứu: link tra cứu, mã số bí mật (mccqt), MST người bán. -->
+        <Popup x:Name="LookupSuggestionPopup"
+               AllowsTransparency="True"
+               Placement="Center"
+               PlacementTarget="{Binding ElementName=RootGrid}"
+               IsOpen="{Binding IsLookupPopupOpen, Mode=TwoWay}">
+            <Border Background="{DynamicResource SiPageBg}"
+                    BorderBrush="{DynamicResource SiHeaderBorder}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="20"
+                    MinWidth="380"
+                    MaxWidth="480">
+                <StackPanel>
+                    <TextBlock Text="Gợi ý tra cứu PDF"
+                               FontSize="16"
+                               FontWeight="Bold"
+                               Margin="0,0,0,12"
+                               Foreground="{DynamicResource SiTextPrimary}" />
+
+                    <StackPanel Margin="0,0,0,10">
+                        <TextBlock Text="Link tra cứu"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiTextPrimary}" />
+                        <TextBox Text="{Binding LookupSearchUrl, Converter={StaticResource UrlToShortDisplayConverter}}"
+                                 IsReadOnly="True"
+                                 Margin="0,2,0,0"
+                                 FontSize="12" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,0,10">
+                        <TextBlock Text="Mã số bí mật / Mã tra cứu (mccqt)"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiTextPrimary}" />
+                        <TextBox Text="{Binding LookupSecretCode, TargetNullValue='(Chưa có mã tra cứu)'}"
+                                 IsReadOnly="True"
+                                 Margin="0,2,0,0"
+                                 FontSize="12" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,0,10">
+                        <TextBlock Text="MST người bán"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiTextPrimary}" />
+                        <TextBox Text="{Binding LookupSellerTaxCode, TargetNullValue='(Chưa có)'}"
+                                 IsReadOnly="True"
+                                 Margin="0,2,0,0"
+                                 FontSize="12" />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                Margin="0,12,0,0">
+                        <ui:Button Content="Tự lấy PDF (HTInvoice)"
+                                   Appearance="Primary"
+                                   Padding="10,4"
+                                   FontSize="12"
+                                   Margin="0,0,8,0"
+                                   Command="{Binding OpenHtInvoiceAutoLookupCommand}"
+                                   Visibility="{Binding IsHtInvoiceLookup, Converter={StaticResource BoolToVis}}" />
+                        <ui:Button Content="Đóng"
+                                   Appearance="Secondary"
+                                   Padding="10,4"
+                                   FontSize="12"
+                                   Command="{Binding CloseLookupPopupCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Popup>
+
+        <!-- Popup xem hóa đơn liên quan: chỉ hiển thị danh sách từng HĐ liên quan (mỗi HĐ một card). -->
+        <Popup x:Name="RelatedInvoicesPopup"
+               AllowsTransparency="True"
+               Placement="Center"
+               PlacementTarget="{Binding ElementName=RootGrid}"
+               IsOpen="{Binding IsRelatedInvoicesPopupOpen, Mode=TwoWay}">
+            <Border Background="{DynamicResource SiPageBg}"
+                    BorderBrush="{DynamicResource SiHeaderBorder}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="20"
+                    MinWidth="480"
+                    MaxWidth="640"
+                    MaxHeight="500">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Tiêu đề (không có nút trên đầu) -->
+                    <TextBlock Grid.Row="0" Text="Hóa đơn liên quan" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,10" />
+
+                    <!-- Hóa đơn hiện tại (bind RelatedInvoicesCurrentInvoice để vẫn có dữ liệu sau khi đóng menu) -->
+                    <Border Grid.Row="1" Margin="0,0,0,10" Padding="12" Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1" CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="Hóa đơn hiện tại" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,8" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Mẫu số hóa đơn:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding RelatedInvoicesCurrentInvoice.Khmshdon}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Ký hiệu hóa đơn:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RelatedInvoicesCurrentInvoice.KyHieu}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Số hóa đơn:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding RelatedInvoicesCurrentInvoice.SoHoaDon}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Trạng thái hóa đơn:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding RelatedInvoicesCurrentInvoice.TrangThaiDisplay}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" TextWrapping="Wrap" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Danh sách hóa đơn liên quan (từ API relative, mỗi item = 1 card) -->
+                    <ScrollViewer Grid.Row="2"
+                                  VerticalScrollBarVisibility="Auto"
+                                  MaxHeight="260">
+                        <StackPanel>
+                            <TextBlock Text="Hóa đơn liên quan (từ API)" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,6" />
+                            <ItemsControl ItemsSource="{Binding RelatedInvoices}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,10"
+                                                Padding="12"
+                                                Background="{DynamicResource SiCardBg}"
+                                                BorderBrush="{DynamicResource SiCardBorder}"
+                                                BorderThickness="1"
+                                                CornerRadius="6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="140" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Trạng thái:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Loai}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Ký hiệu mẫu số:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Khmshdon}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Ký hiệu hóa đơn:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Khhdon}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Số hóa đơn:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Shdon}" FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Nội dung điều chỉnh:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,2" />
+                                                <TextBlock Grid.Row="4" Grid.Column="1"
+                                                           Text="{Binding NoiDungDieuChinh}"
+                                                           FontSize="12"
+                                                           Foreground="{DynamicResource SiTextSecondary}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,0,0,2" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Nút Đóng phía dưới (dễ thấy) -->
+                    <StackPanel Grid.Row="3"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                Margin="0,12,0,0">
+                        <ui:Button Content="Đóng"
+                                   Command="{Binding CloseRelatedInvoicesPopupCommand}"
+                                   Appearance="Secondary"
+                                   Padding="12,6"
+                                   FontSize="12" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Popup>
+
+        <!-- Popup loading cho các thao tác xem HĐ / tải XML / PDF (chỉ card giữa màn hình, không che hết) -->
+        <Popup x:Name="RowActionLoadingPopup"
+               AllowsTransparency="True"
+               Placement="Center"
+               PlacementTarget="{Binding ElementName=RootGrid}"
+               IsOpen="{Binding IsRowActionBusy, Mode=OneWay}">
+            <Border Background="{DynamicResource SiCardBg}"
+                    CornerRadius="12"
+                    Padding="24"
+                    BorderBrush="{DynamicResource SiHeaderBorder}"
+                    BorderThickness="1">
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            MinWidth="260">
+                    <ui:ProgressRing Width="40"
+                                     Height="40"
+                                     IsIndeterminate="True"
+                                     Foreground="{DynamicResource SiAccent}" />
+                    <TextBlock Text="Đang thực hiện thao tác..."
+                               Margin="0,12,0,0"
+                               FontSize="16"
+                               FontWeight="Bold"
+                               HorizontalAlignment="Center"
+                               Foreground="{DynamicResource SiTextPrimary}" />
+                    <TextBlock Text="{Binding StatusMessage}"
+                               Margin="0,4,0,0"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               Foreground="{DynamicResource SiTextSecondary}"
+                               MaxWidth="280" />
+                </StackPanel>
+            </Border>
+        </Popup>
+    </Grid>
+</UserControl>
+

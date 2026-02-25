@@ -1,0 +1,331 @@
+<html>
+<head>
+<META http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Phiếu xuất kho kiêm vận chuyển nội bộ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=Edge">
+<script type="text/javascript" src="details.js"></script>
+<style>
+                    * {
+                    box-sizing: border-box;
+                    -moz-box-sizing: border-box;
+                    }
+
+                    body {
+                    width: 100%;
+                    height: 100%;
+                    margin: 0 auto;
+                    padding: 0;
+                    font-size: 13pt;
+                    }
+
+                    .print-page {
+                    width: 210mm;
+                    min-height: 297mm;
+                    margin: 0mm auto;
+                    }
+
+                    .bg-container {
+                    position: fixed;
+                    width: 100%;
+                    height: 100%;
+                    z-index: 0;
+                    background-image: url("viewinvoice-bg.jpg");
+                    background-repeat: no-repeat;
+                    background-position: center;
+                    background-size: 250%;
+                    border: 3px double rgba(145, 87, 21, 0.69);
+                    top: 0px;
+                    left: 0px;
+                    }
+
+                    .main-page {
+                    font-family: "Times New Roman";
+                    padding: 20px;
+                    line-height: 1.5;
+                    position: relative;
+                    z-index: 1;
+                    border: 3px double rgba(145, 87, 21, 0.69);
+                    }
+
+                    .heading-content .main-title {
+                    font-size: 20pt;
+                    text-align: center;
+                    display: block;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                    }
+
+                    .heading-content p.day {
+                    text-align: center;
+                    display: block;
+                    }
+
+                    .heading-content .top-content {
+                    display: flex;
+                    justify-content: space-between;
+                    }
+
+                    .heading-content .code-content {
+                    display: inline-block;
+                    text-align: right;
+                    font-size: 12pt;
+                    }
+
+                    .heading-content .code-content .code-ms {
+                    display: block;
+                    }
+
+                    .vip-divide {
+                    width: 100%;
+                    height: 0;
+                    border-bottom: 1px solid rgba(145, 87, 21, 0.69);
+                    }
+
+                    .content-info {
+                    padding-top: 5px;
+                    }
+
+                    .content-info .list-fill-out {
+                    list-style: none;
+                    padding-inline-start: 0;
+                    margin-top: 5px;
+                    margin-bottom: 5px;
+                    }
+
+                    .content-info .list-fill-out li {
+                    font-size: 13pt;
+                    }
+
+                    .data-item {
+                    width: 100%;
+                    display: flex;
+                    justify-content: left;
+                    align-items: flex-start;
+                    font-size: 13pt;
+                    color: rgba(0, 0, 0, 0.85);
+                    }
+
+                    .data-item .di-label {
+                    min-height: 25px;
+                    height: auto;
+                    border-bottom: 1px dashed transparent;
+                    display: flex;
+                    align-items: flex-start;
+                    }
+
+                    .data-item .di-value {
+                    box-sizing: border-box;
+                    flex: 1;
+                    min-height: 25px;
+                    border-bottom: 1px dashed #e0e0e0;
+                    display: flex;
+                    align-items: flex-start;
+                    padding-left: 5px;
+                    height: auto;
+                    justify-content: unset;
+                    }
+
+                    .res-tb {
+                    border-collapse: collapse;
+                    border-spacing: 0px;
+                    width: 100%;
+                    overflow-x: auto;
+                    margin: 10px 0px;
+                    min-width: 250px;
+                    }
+
+                    .res-tb tr td {
+                    border: 1px solid black;
+                    padding: 6px 4px 6px 4px;
+                    vertical-align: baseline;
+                    }
+
+                    .res-tb tr td.tx-center {
+                    text-align: center;
+                    }
+
+                    .res-tb thead tr th {
+                    border: 1px solid black;
+                    vertical-align: middle;
+                    padding: 6px 4px 6px 4px;
+                    text-align: center;
+                    }
+
+                    .res-tb thead tr th.tb-stt {
+                    width: 60px;
+                    }
+
+                    .res-tb thead tr th.tb-thh {
+                    width: 260px;
+                    }
+
+                    .res-tb thead tr th.tb-dvt {
+                    width: 90px;
+                    }
+
+                    .res-tb thead tr th.tb-sl {
+                    width: 90px;
+                    }
+
+                    .res-tb thead tr th.tb-dg {
+                    width: 120px;
+                    }
+
+                    .res-tb thead tr th.tb-ts {
+                    width: 140px;
+                    }
+
+                    .ft-sign {
+                    padding-top: 40px;
+                    }
+
+                    .ft-sign .sign-dx {
+                    display: flex;
+                    flex-wrap: wrap;
+                    justify-content: space-around;
+                    align-items: flex-start;
+                    }
+
+                    .ft-sign .sign-dx h3 p {
+                    text-align: center;
+                    font-size: 13pt;
+                    font-weight: 100;
+                    }
+
+                    .ft-sign .sign-dx h3 p:nth-child(2) {
+                    font-size: 14px;
+                    font-weight: normal;
+                    }
+
+                    .sign-box {
+                    width: 260px !important;
+                    padding: 5px !important;
+                    border: 2px solid #23b709 !important;
+                    background-image: url("sign-check.jpg") !important;
+                    background-repeat: no-repeat !important;
+                    background-position: right 45px bottom 10px !important;
+                    background-size: 70px 60px !important;
+                    margin-top: 10px !important;
+                    font-weight: 500;
+                    }
+
+                    .sign-box span {
+                    color: #23b709 !important;
+                    font-size: 13pt !important;
+                    text-align: left !important;
+                    display: block;
+                    }
+
+                    @page {
+                    size: A4;
+                    margin: 0 !important;
+                    }
+
+                    @media print {
+                    * {
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                    }
+                    body {
+                    width: auto;
+                    height: auto;
+                    margin: 0 auto;
+                    }
+                    /* Bảng chi tiết phiếu xuất kho: cho phép chia trang, header chỉ in ở trang đầu,
+                       và không cắt ngang từng dòng khi xuống trang. */
+                    .res-tb {
+                    page-break-inside: auto;
+                    }
+                    .res-tb tr,
+                    .res-tb td {
+                    page-break-inside: avoid;
+                    }
+                    .main-page {
+                    margin: 0;
+                    width: initial;
+                    min-height: 296mm;
+                    background: none;
+                    border: none;
+                    }
+                    }
+</style>
+</head>
+<body id="print-layout" class="A4">
+<div class="print-page">
+    <div class="bg-container"></div>
+    <div class="main-page">
+        <div class="heading-content">
+            <div class="top-content">
+                <div style="width: 80px; min-height: 20px">
+                    <div id="qrcodeTable"></div>
+                </div>
+                <div class="code-content">
+                    <b class="code-ms">Mẫu số {{MAU_SO}}</b>
+                    <b class="code-ms">Ký hiệu: {{KY_HIEU}}</b>
+                    <b class="code-ms">Số: {{SO}}</b>
+                </div>
+            </div>
+            <div class="title-heading">
+                <h2 class="main-title">{{THDON}}</h2>
+                <p class="day">
+                    Ngày {{NGAY_DAY}} tháng {{NGAY_MONTH}} năm {{NGAY_YEAR}}<br/>
+                    MCCQT: {{MCCQT}}
+                </p>
+            </div>
+        </div>
+        <div class="vip-divide"></div>
+        <div class="content-info">
+            <ul class="list-fill-out">
+                {{BLOCK_NGUOI_BAN_PRINT}}
+                <li>
+                    <div class="vip-divide" style="margin: 5px 0;"></div>
+                </li>
+                {{BLOCK_NGUOI_MUA_PRINT}}
+            </ul>
+            <div class="vip-divide"></div>
+            <table class="res-tb">
+                <thead>
+                <tr>
+                    <th class="tb-stt">STT</th>
+                    <th class="tb-stt">Tính chất</th>
+                    <th class="tb-thh">Tên hàng hóa, dịch vụ</th>
+                    <th class="tb-dvt">Đơn vị tính</th>
+                    <th class="tb-sl">Số lượng</th>
+                    <th class="tb-dg">Đơn giá</th>
+                    <th class="tb-ts">Thành tiền</th>
+                </tr>
+                </thead>
+                <tbody>
+                {{DS_HANG_HOA}}
+                </tbody>
+            </table>
+            <ul class="list-fill-out">
+                <li>
+                    <div class="data-item">
+                        <div class="di-label"><span>Đơn vị tiền tệ:</span></div>
+                        <div class="di-value"><div>{{DVTTE}}</div></div>
+                    </div>
+                </li>
+            </ul>
+        </div>
+        <div class="ft-sign">
+            <div class="sign-dx">
+                <h3>
+                    <p>NGƯỜI NHẬN HÀNG</p>
+                    <p><i>(Chữ ký số (nếu có))</i></p>
+                </h3>
+                <h3>
+                    <p>NGƯỜI XUẤT HÀNG</p>
+                    <p><i>(Chữ ký điện tử, chữ ký số)</i></p>
+                    {{SIGN_BOX}}
+                </h3>
+            </div>
+        </div>
+    </div>
+</div>
+<input type="hidden" id="qrcodeContent" value="{{QRCODE_CONTENT}}">
+</body>
+</html>
+
