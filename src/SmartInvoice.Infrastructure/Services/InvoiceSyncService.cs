@@ -16,6 +16,8 @@ namespace SmartInvoice.Infrastructure.Services;
 
 public class InvoiceSyncService : IInvoiceSyncService
 {
+    private const int XmlRedownloadAfterDays = 3;
+
     private readonly IUnitOfWork _uow;
     private readonly IHoaDonDienTuApiClient _apiClient;
     private readonly ICompanyAppService _companyService;
@@ -271,6 +273,21 @@ public class InvoiceSyncService : IInvoiceSyncService
         return (pageDtos, totalCount, summaryDto);
     }
 
+    public async Task<IReadOnlyList<InvoiceDisplayDto>> GetInvoicesByIdsAsync(Guid companyId, IReadOnlyList<string> invoiceIds, CancellationToken cancellationToken = default)
+    {
+        if (invoiceIds == null || invoiceIds.Count == 0)
+            return Array.Empty<InvoiceDisplayDto>();
+        var entities = await _uow.Invoices.GetByCompanyAndExternalIdsAsync(companyId, invoiceIds, cancellationToken).ConfigureAwait(false);
+        var list = new List<InvoiceDisplayDto>();
+        foreach (var inv in entities)
+        {
+            var dto = ParseToDisplayDto(inv);
+            if (dto != null)
+                list.Add(dto);
+        }
+        return list;
+    }
+
     /// <summary>Map tên cột UI (SortMemberPath) sang tên cột entity để ORDER BY trong DB. CounterpartyName → NguoiMua khi Bán ra (IsSold), NguoiBan khi Mua vào.</summary>
     private static string? MapSortByToEntity(string? sortBy, bool? isSold)
     {
@@ -284,7 +301,7 @@ public class InvoiceSyncService : IInvoiceSyncService
         };
     }
 
-    public async Task<DownloadXmlResult> DownloadInvoicesXmlAsync(Guid companyId, IReadOnlyList<InvoiceDisplayDto> invoices, string folderPath, IProgress<DownloadXmlProgress>? progress, CancellationToken cancellationToken = default)
+    public async Task<DownloadXmlResult> DownloadInvoicesXmlAsync(Guid companyId, IReadOnlyList<InvoiceDisplayDto> invoices, string folderPath, IProgress<DownloadXmlProgress>? progress, CancellationToken cancellationToken = default, string? zipOutputDirectory = null)
     {
         var company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (company == null)
@@ -300,7 +317,7 @@ public class InvoiceSyncService : IInvoiceSyncService
         if (company?.AccessToken == null)
             return new DownloadXmlResult(false, "Token trống.", 0);
 
-        // folderPath = thư mục gốc theo công ty (Mã công ty). Lưu từng hóa đơn vào con tháng_năm (yyyy_MM).
+        // folderPath = thư mục gốc XML theo công ty (Mã công ty)\XML. Lưu từng hóa đơn vào con tháng_năm (yyyy_MM).
         var total = invoices.Count;
         var downloaded = 0;
         var failedCount = 0;
@@ -324,34 +341,61 @@ public class InvoiceSyncService : IInvoiceSyncService
                 progress?.Report(new DownloadXmlProgress(i + 1, total, null, new DownloadXmlItemResult(key, soHoaDonDisplay, false, false, "Thiếu MST hoặc ký hiệu")));
                 continue;
             }
-            var baseName = $"{SanitizeFileName(khhdon)}-{inv.SoHoaDon}";
+            // Tên file XML giống tên PDF: {SoHoaDon}_{KyHieu}.xml để người dùng dễ nhận ra.
+            var baseName = $"{inv.SoHoaDon}_{SanitizeFileName(khhdon)}";
             var xmlFileName = baseName + ".xml";
             var monthFolder = Path.Combine(folderPath, InvoiceFileStoragePathHelper.GetMonthYearFolderName(inv.NgayLap));
             Directory.CreateDirectory(monthFolder);
 
             DownloadXmlItemResult? itemResult = null;
+
+            // Nếu đã có XML local và còn mới (< XmlRedownloadAfterDays) thì không gọi API lại, chỉ gom vào ZIP và tăng thống kê.
+            try
+            {
+                var existingXmlPath = Path.Combine(monthFolder, xmlFileName);
+                if (existingXmlPath != null && File.Exists(existingXmlPath))
+                {
+                    var lastWrite = File.GetLastWriteTime(existingXmlPath);
+                    if ((DateTime.Now - lastWrite).TotalDays < XmlRedownloadAfterDays)
+                    {
+                        downloaded++;
+                        itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, true, false, "Đã có XML, bỏ qua tải lại.");
+                        try
+                        {
+                            var destXmlPath = Path.Combine(tempPackageFolder, xmlFileName);
+                            File.Copy(existingXmlPath, destXmlPath, overwrite: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to copy existing XML into temp package folder for invoice {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+                        }
+
+                        progress?.Report(new DownloadXmlProgress(i + 1, total, xmlFileName, itemResult));
+                        continue;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed when checking existing XML file for invoice {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+            }
+
             try
             {
                 var bytes = await _apiClient.GetInvoiceExportAsync(company.AccessToken, nbmst, khhdon, inv.SoHoaDon, inv.Khmshdon, fromSco: inv.MayTinhTien, cancellationToken).ConfigureAwait(false);
                 if (bytes is { Length: > 0 })
                 {
-                    var saved = await ExtractAndSaveExportAsync(monthFolder, baseName, bytes, cancellationToken).ConfigureAwait(false);
+                    var saved = await ExtractAndSaveExportAsync(Path.Combine(monthFolder, xmlFileName), bytes, cancellationToken).ConfigureAwait(false);
                     if (saved)
                     {
                         downloaded++;
                         itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, true, false, null);
                         try
                         {
-                            string? sourceXml = null;
-                            var destDir = Path.Combine(monthFolder, baseName);
-                            if (Directory.Exists(destDir))
-                                sourceXml = Directory.EnumerateFiles(destDir, "*.xml", SearchOption.AllDirectories).FirstOrDefault();
-                            var rawXmlPath = Path.Combine(monthFolder, xmlFileName);
-                            if (sourceXml == null && File.Exists(rawXmlPath))
-                                sourceXml = rawXmlPath;
-                            if (sourceXml != null && File.Exists(sourceXml))
+                            var sourceXml = Path.Combine(monthFolder, xmlFileName);
+                            if (File.Exists(sourceXml))
                             {
-                                var destXmlPath = Path.Combine(tempPackageFolder, Path.GetFileName(sourceXml));
+                                var destXmlPath = Path.Combine(tempPackageFolder, xmlFileName);
                                 File.Copy(sourceXml, destXmlPath, overwrite: true);
                             }
                         }
@@ -415,9 +459,11 @@ public class InvoiceSyncService : IInvoiceSyncService
                 : Array.Empty<string>();
             if (xmlFiles.Length > 0)
             {
-                var exportZipFolder = Path.Combine(folderPath, "ExportXmlZip");
-                Directory.CreateDirectory(exportZipFolder);
                 var zipName = $"HoaDonXml_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
+                var exportZipFolder = !string.IsNullOrWhiteSpace(zipOutputDirectory)
+                    ? zipOutputDirectory.Trim()
+                    : Path.Combine(folderPath, "ExportXmlZip");
+                Directory.CreateDirectory(exportZipFolder);
                 zipPath = Path.Combine(exportZipFolder, zipName);
                 if (File.Exists(zipPath)) File.Delete(zipPath);
                 ZipFile.CreateFromDirectory(tempPackageFolder, zipPath);
@@ -443,27 +489,38 @@ public class InvoiceSyncService : IInvoiceSyncService
         return new DownloadXmlResult(true, null, downloaded, failedCount, noXmlCount, zipPath);
     }
 
-    /// <summary>Giải nén ZIP (API trả về) vào thư mục con baseFileName để giữ HTML/JS; hoặc ghi raw XML ra file .xml.</summary>
-    private static async Task<bool> ExtractAndSaveExportAsync(string folderPath, string baseFileName, byte[] bytes, CancellationToken cancellationToken)
+    /// <summary>
+    /// Lưu XML xuống đĩa:
+    /// - Nếu bytes là ZIP: tìm entry .xml đầu tiên và lưu vào đúng xmlFilePath.
+    /// - Nếu không phải ZIP: ghi toàn bộ bytes thành XML tại xmlFilePath.
+    /// </summary>
+    private static async Task<bool> ExtractAndSaveExportAsync(string xmlFilePath, byte[] bytes, CancellationToken cancellationToken)
     {
         if (bytes.Length >= 2 && bytes[0] == 0x50 && bytes[1] == 0x4B) // PK (ZIP)
         {
             try
             {
-                var destDir = Path.Combine(folderPath, baseFileName);
-                Directory.CreateDirectory(destDir);
+                var destDir = Path.GetDirectoryName(xmlFilePath);
+                if (!string.IsNullOrEmpty(destDir))
+                    Directory.CreateDirectory(destDir);
                 using var stream = new MemoryStream(bytes);
                 using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+                ZipArchiveEntry? xmlEntry = null;
                 foreach (var entry in zip.Entries)
                 {
                     if (string.IsNullOrEmpty(entry.Name)) continue;
-                    var destPath = Path.Combine(destDir, entry.Name);
-                    var dir = Path.GetDirectoryName(destPath);
-                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                    await using (var entryStream = entry.Open())
-                    await using (var fileStream = File.Create(destPath))
-                        await entryStream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
+                    if (entry.Name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                    {
+                        xmlEntry = entry;
+                        break;
+                    }
                 }
+                if (xmlEntry == null)
+                    return false;
+
+                await using (var entryStream = xmlEntry.Open())
+                await using (var fileStream = File.Create(xmlFilePath))
+                    await entryStream.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
                 return true;
             }
             catch (Exception)
@@ -471,9 +528,11 @@ public class InvoiceSyncService : IInvoiceSyncService
                 return false;
             }
         }
-        var xmlPath = Path.Combine(folderPath, baseFileName + ".xml");
         var text = Encoding.UTF8.GetString(bytes);
-        await File.WriteAllTextAsync(xmlPath, text, cancellationToken).ConfigureAwait(false);
+        var dirPath = Path.GetDirectoryName(xmlFilePath);
+        if (!string.IsNullOrEmpty(dirPath))
+            Directory.CreateDirectory(dirPath);
+        await File.WriteAllTextAsync(xmlFilePath, text, cancellationToken).ConfigureAwait(false);
         return true;
     }
 

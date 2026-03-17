@@ -210,7 +210,7 @@ public sealed class ViettelInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             if (item.ValueKind != JsonValueKind.Object) continue;
             var tt = item.TryGetProperty("ttruong", out var t) ? t.GetString()?.Trim() : null;
             if (string.IsNullOrEmpty(tt) || !IsMaSoBiMatTtruong(tt)) continue;
-            var dl = item.TryGetProperty("dlieu", out var d) ? d.GetString() : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
+            var dl = TryGetDataValue(item);
             if (!string.IsNullOrWhiteSpace(dl)) return dl.Trim();
             break;
         }
@@ -238,7 +238,7 @@ public sealed class ViettelInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             {
                 if (item.ValueKind != JsonValueKind.Object) continue;
                 if (!IsMaSoBiMatTtruong(item.TryGetProperty("ttruong", out var t) ? t.GetString()?.Trim() : null)) continue;
-                var dl = item.TryGetProperty("dlieu", out var d) ? d.GetString() : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
+                var dl = TryGetDataValue(item);
                 if (!string.IsNullOrWhiteSpace(dl)) return dl.Trim();
             }
         }
@@ -250,7 +250,7 @@ public sealed class ViettelInvoicePdfFetcher : IKeyedInvoicePdfFetcher
                 var val = prop.Value;
                 var s = val.ValueKind == JsonValueKind.String ? val.GetString()?.Trim() : null;
                 if (string.IsNullOrWhiteSpace(s) && val.ValueKind == JsonValueKind.Object)
-                    s = (val.TryGetProperty("dlieu", out var d) ? d.GetString() : (val.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null))?.Trim();
+                    s = TryGetDataValue(val)?.Trim();
                 if (!string.IsNullOrWhiteSpace(s)) return s;
             }
         }
@@ -270,6 +270,53 @@ public sealed class ViettelInvoicePdfFetcher : IKeyedInvoicePdfFetcher
         var n = StringNormalization.NormalizeForComparison(name);
         return n == MaSoBiMatCanonical || n.Contains(MaSoBiMatCanonical, StringComparison.Ordinal)
             || n == "reservationcode" || n.Contains("reservationcode", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Lấy giá trị dữ liệu thực sự từ một object Viettel: ưu tiên dlieu/dLieu, sau đó thử các property string khác (giatri, value, ...).
+    /// Dùng chung cho cả cttkhac và ttkhac.ttchung để tăng khả năng bắt được "Mã số bí mật".
+    /// </summary>
+    private static string? TryGetDataValue(JsonElement obj)
+    {
+        if (obj.ValueKind != JsonValueKind.Object) return null;
+
+        // 1) Ưu tiên dlieu / dLieu (theo chuẩn cttkhac)
+        if (obj.TryGetProperty("dlieu", out var d) && d.ValueKind == JsonValueKind.String)
+        {
+            var s = d.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+        if (obj.TryGetProperty("dLieu", out var dL) && dL.ValueKind == JsonValueKind.String)
+        {
+            var s = dL.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+
+        // 2) Thử một số key phổ biến khác: giatri, value
+        if (obj.TryGetProperty("giatri", out var gt) && gt.ValueKind == JsonValueKind.String)
+        {
+            var s = gt.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+        if (obj.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String)
+        {
+            var s = v.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+
+        // 3) Fallback: lấy property string đầu tiên khác ttruong
+        foreach (var prop in obj.EnumerateObject())
+        {
+            if (string.Equals(prop.Name, "ttruong", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (prop.Value.ValueKind == JsonValueKind.String)
+            {
+                var s = prop.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+        }
+
+        return null;
     }
 
     private sealed class ViettelCaptchaGenerateResponse

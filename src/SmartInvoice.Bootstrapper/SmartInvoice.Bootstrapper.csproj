@@ -6,11 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>SmartInvoice.Bootstrapper</RootNamespace>
+    <!-- Icon ứng dụng (exe) -->
+    <ApplicationIcon>..\..\assets\SmartInvoice.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <Content Include="..\..\assets\SmartInvoice.ico" Link="SmartInvoice.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Prism.DryIoc" Version="9.0.537" />

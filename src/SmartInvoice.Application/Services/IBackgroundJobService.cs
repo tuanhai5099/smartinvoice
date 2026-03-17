@@ -14,6 +14,15 @@ public record BackgroundJobCreateDto(
     bool ExportExcel
 );
 
+/// <summary>Tham số tạo job tải XML hoặc PDF hàng loạt (từ màn hình danh sách hóa đơn).</summary>
+public record BulkDownloadCreateDto(
+    Guid CompanyId,
+    bool IsSold,
+    IReadOnlyList<string> InvoiceIds,
+    /// <summary>Bắt buộc cho job XML; null cho job PDF (dùng thư mục mặc định theo công ty).</summary>
+    string? ExportXmlFolderPath
+);
+
 /// <summary>Tham số tạo job xuất Excel (chạy nền, xong báo user).</summary>
 public record ExportExcelCreateDto(
     Guid CompanyId,
@@ -64,6 +73,10 @@ public record BackgroundJobDto(
             {
                 if (Type == BackgroundJobType.ExportExcel)
                     return "Đang xuất Excel...";
+                if (Type == BackgroundJobType.DownloadXmlBulk)
+                    return $"Đang tải XML hàng loạt ({ProgressCurrent}/{ProgressTotal})";
+                if (Type == BackgroundJobType.DownloadPdfBulk)
+                    return $"Đang tải PDF hàng loạt ({ProgressCurrent}/{ProgressTotal})";
                 if (ProgressTotal <= 2 && ProgressCurrent == 1)
                     return "Đang đồng bộ hóa đơn...";
                 if (ProgressTotal > 2)
@@ -74,6 +87,10 @@ public record BackgroundJobDto(
             {
                 if (Type == BackgroundJobType.ExportExcel)
                     return ResultPath != null ? "Đã xuất file Excel." : "Xong.";
+                if (Type == BackgroundJobType.DownloadXmlBulk)
+                    return $"XML: thành công {XmlDownloadedCount}, thất bại {XmlFailedCount}, không có XML {XmlNoXmlCount}";
+                if (Type == BackgroundJobType.DownloadPdfBulk)
+                    return $"PDF: thành công {XmlDownloadedCount}, thất bại {XmlFailedCount}, bỏ qua {XmlNoXmlCount}";
                 var parts = new List<string>();
                 parts.Add($"Đồng bộ: {SyncCount} hóa đơn");
                 if (DownloadXml && XmlTotal > 0)
@@ -82,6 +99,10 @@ public record BackgroundJobDto(
             }
             if (Status == BackgroundJobStatus.Pending && Type == BackgroundJobType.ExportExcel)
                 return "Đang chờ xuất Excel...";
+            if (Status == BackgroundJobStatus.Pending && Type == BackgroundJobType.DownloadXmlBulk)
+                return "Đang chờ tải XML hàng loạt...";
+            if (Status == BackgroundJobStatus.Pending && Type == BackgroundJobType.DownloadPdfBulk)
+                return "Đang chờ tải PDF hàng loạt...";
             return $"{ProgressCurrent}/{ProgressTotal}";
         }
     }
@@ -97,6 +118,28 @@ public record BackgroundJobDto(
                 lines.Add($"• Xuất Excel: {(IsSummaryOnly ? "Tổng hợp" : "Tổng hợp + Chi tiết")} (key: {ExportKey ?? "default"}).");
                 if (ResultPath != null)
                     lines.Add($"• File: {ResultPath}");
+                return string.Join(Environment.NewLine, lines);
+            }
+            if (Type == BackgroundJobType.DownloadXmlBulk)
+            {
+                var lines = new List<string>();
+                lines.Add($"• Tải XML hàng loạt: tổng {XmlTotal} hóa đơn.");
+                lines.Add($"  – Thành công: {XmlDownloadedCount}");
+                lines.Add($"  – Thất bại: {XmlFailedCount}");
+                lines.Add($"  – Không có XML: {XmlNoXmlCount}");
+                if (ResultPath != null)
+                    lines.Add($"• Gói ZIP: {ResultPath}");
+                return string.Join(Environment.NewLine, lines);
+            }
+            if (Type == BackgroundJobType.DownloadPdfBulk)
+            {
+                var lines = new List<string>();
+                lines.Add($"• Tải PDF hàng loạt: tổng {XmlTotal} hóa đơn.");
+                lines.Add($"  – Thành công: {XmlDownloadedCount}");
+                lines.Add($"  – Thất bại: {XmlFailedCount}");
+                lines.Add($"  – Bỏ qua (chưa cấu hình): {XmlNoXmlCount}");
+                if (ResultPath != null)
+                    lines.Add($"• Gói ZIP: {ResultPath}");
                 return string.Join(Environment.NewLine, lines);
             }
             var reportLines = new List<string>();
@@ -121,6 +164,12 @@ public interface IBackgroundJobService
 
     /// <summary>Đưa job xuất Excel vào hàng đợi (chạy nền, xong lưu file và cập nhật ResultPath).</summary>
     Task<BackgroundJobDto> EnqueueExportExcelAsync(ExportExcelCreateDto options, CancellationToken cancellationToken = default);
+
+    /// <summary>Đưa job tải XML hàng loạt vào hàng đợi (chạy nền, xong báo user).</summary>
+    Task<BackgroundJobDto> EnqueueDownloadXmlBulkAsync(BulkDownloadCreateDto options, CancellationToken cancellationToken = default);
+
+    /// <summary>Đưa job tải PDF hàng loạt vào hàng đợi (chạy nền, xong báo user).</summary>
+    Task<BackgroundJobDto> EnqueueDownloadPdfBulkAsync(BulkDownloadCreateDto options, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<BackgroundJobDto>> GetRecentJobsAsync(int maxCount, CancellationToken cancellationToken = default);
 

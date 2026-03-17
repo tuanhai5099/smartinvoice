@@ -344,7 +344,7 @@ public class CompanyAppService : ICompanyAppService
     }
 
     /// <summary>
-    /// Lấy captcha từ API, lưu PNG xuống thư mục tạm để review, giải captcha. Nếu kết quả &lt; 6 ký tự thì lấy captcha mới và giải lại (tối đa <see cref="MaxCaptchaRetries"/> lần).
+    /// Lấy captcha từ API, giải trực tiếp từ stream PNG (không lưu file). Nếu kết quả &lt; 6 ký tự thì lấy captcha mới và giải lại (tối đa <see cref="MaxCaptchaRetries"/> lần).
     /// </summary>
     private async Task<(CaptchaResponse captcha, string solvedText, string tempFilePath)> FetchAndSolveCaptchaAsync(CancellationToken cancellationToken)
     {
@@ -356,25 +356,15 @@ public class CompanyAppService : ICompanyAppService
         {
             var captcha = await _apiClient.GetCaptchaAsync(cancellationToken).ConfigureAwait(false);
             using var pngStream = SvgToImageHelper.SvgToPngStream(captcha.ContentSvg);
-
-            var tempDir = Path.Combine(Path.GetTempPath(), "SmartInvoice_Captcha");
-            Directory.CreateDirectory(tempDir);
-            var tempPath = Path.Combine(tempDir, $"captcha_{captcha.Key}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.png");
-            await using (var fs = File.Create(tempPath))
-            {
-                await pngStream.CopyToAsync(fs, cancellationToken).ConfigureAwait(false);
-            }
-            _logger.LogDebug("Captcha saved for review: {Path}", tempPath);
-
             pngStream.Position = 0;
             var captchaText = (await _captchaSolver.SolveFromStreamAsync(pngStream, cancellationToken).ConfigureAwait(false))?.Trim() ?? "";
             if (captchaText.Length >= MinCaptchaLength)
-                return (captcha, captchaText, tempPath);
+                return (captcha, captchaText, string.Empty);
 
             _logger.LogDebug("Captcha solved with {Length} chars (< {Min}), fetching new captcha (attempt {Attempt})", captchaText.Length, MinCaptchaLength, attempt + 1);
             lastCaptcha = captcha;
             lastText = captchaText;
-            lastPath = tempPath;
+            lastPath = string.Empty;
         }
 
         return (lastCaptcha ?? (await _apiClient.GetCaptchaAsync(cancellationToken).ConfigureAwait(false)), lastText, lastPath);
@@ -435,11 +425,32 @@ public class CompanyAppService : ICompanyAppService
     private static bool IsWrongCredentialsMessage(string? message)
     {
         if (string.IsNullOrWhiteSpace(message)) return false;
-        var m = message.Trim().ToLowerInvariant();
-        return m.Contains("sai") && (m.Contains("mật khẩu") || m.Contains("mat khau") || m.Contains("đăng nhập") || m.Contains("dang nhap") || m.Contains("tên đăng nhập") || m.Contains("ten dang nhap"))
-            || m.Contains("invalid") && (m.Contains("credential") || m.Contains("password") || m.Contains("username"))
-            || m.Contains("incorrect") && (m.Contains("password") || m.Contains("username"))
-            || m.Contains("401") || m.Contains("unauthorized");
+
+        // Chuẩn hóa: lower + bỏ dấu + bỏ ký tự không phải chữ/số
+        var lower = message.Trim().ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+        var chars = lower.Where(ch =>
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (cat == System.Globalization.UnicodeCategory.NonSpacingMark)
+                return false; // bỏ dấu
+            return char.IsLetterOrDigit(ch);
+        }).ToArray();
+        var norm = new string(chars);
+
+        // Các pattern tiếng Việt/Anh phổ biến cho sai user/pass hoặc unauthorized
+        return
+            // Tiếng Việt: "sai mật khẩu", "sai ten dang nhap", "dang nhap sai", ...
+            norm.Contains("saimatkhau") ||
+            norm.Contains("saitendangnhap") ||
+            norm.Contains("dangnhapsai") ||
+            norm.Contains("dangnhapkhongdung") ||
+            // Tiếng Anh: invalid/incorrect credentials
+            (norm.Contains("invalid") && (norm.Contains("credential") || norm.Contains("password") || norm.Contains("username"))) ||
+            (norm.Contains("incorrect") && (norm.Contains("password") || norm.Contains("username"))) ||
+            norm.Contains("wrongpassword") ||
+            // HTTP 401 / unauthorized
+            norm.Contains("401") ||
+            norm.Contains("unauthorized");
     }
 
     /// <summary>Nhận diện lỗi captcha từ API (ví dụ: "Mã xác thực không chính xác", "captcha không hợp lệ"). Những lỗi này sẽ được tự động retry, không báo user.</summary>

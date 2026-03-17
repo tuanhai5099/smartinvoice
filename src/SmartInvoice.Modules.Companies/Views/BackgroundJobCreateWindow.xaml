@@ -84,10 +84,10 @@
             <TextBlock Text="Loại hóa đơn" FontSize="13" FontWeight="SemiBold"
                        Foreground="{DynamicResource SiTextPrimary}" Margin="0,4,0,4" />
             <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                <RadioButton Content="Bán ra" Margin="0,0,12,0"
-                             IsChecked="{Binding IsSold, Mode=TwoWay}" />
-                <RadioButton Content="Mua vào"
-                             IsChecked="{Binding IsSold, Converter={StaticResource InverseBool}, Mode=TwoWay}" />
+                <CheckBox Content="Bán ra" Margin="0,0,12,0"
+                          IsChecked="{Binding IsSold, Mode=TwoWay}" />
+                <CheckBox Content="Mua vào"
+                          IsChecked="{Binding IsPurchased, Mode=TwoWay}" />
             </StackPanel>
 
             <!-- Khoảng thời gian -->

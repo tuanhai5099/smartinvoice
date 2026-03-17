@@ -24,11 +24,18 @@ public sealed class KeyedInvoicePdfFetcherProvider : IKeyedInvoicePdfFetcherProv
             _container.Resolve<EhoadonInvoicePdfFetcher>(),
             _container.Resolve<HtInvoiceInvoicePdfFetcher>(),
             _container.Resolve<FastInvoicePdfFetcher>(),
+            _container.Resolve<MinvoiceInvoicePdfFetcher>(),
+            _container.Resolve<SmartsignInvoicePdfFetcher>(),
+            _container.Resolve<VininvoiceInvoicePdfFetcher>(),
+            _container.Resolve<IhoadonInvoicePdfFetcher>(),
             _container.Resolve<MeinvoiceInvoicePdfFetcher>(),
             _container.Resolve<EasyInvoicePdfFetcher>(),
             _container.Resolve<ViettelInvoicePdfFetcher>(),
+            _container.Resolve<VdsgInvoicePdfFetcher>(),
             _container.Resolve<WinInvoicePdfFetcher>(),
+            _container.Resolve<WinCommerceInvoicePdfFetcher>(),
             _container.Resolve<EinvoiceInvoicePdfFetcher>(),
+            _container.Resolve<SesGroupInvoicePdfFetcher>(),
             _container.Resolve<MerchantVnptInvoiceFetcher>(),
             _container.Resolve<InvoicePdfFetcherSkeleton>()
         };

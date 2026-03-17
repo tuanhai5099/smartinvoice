@@ -6,6 +6,10 @@ namespace SmartInvoice.Core.Repositories;
 public interface IInvoiceRepository
 {
     Task<Invoice?> GetByExternalIdAsync(Guid companyId, string externalId, CancellationToken cancellationToken = default);
+
+    /// <summary>Lấy danh sách hóa đơn theo công ty và danh sách external id (cho job tải XML/PDF hàng loạt).</summary>
+    Task<IReadOnlyList<Invoice>> GetByCompanyAndExternalIdsAsync(Guid companyId, IReadOnlyList<string> externalIds, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<Invoice>> GetByCompanyIdAsync(Guid companyId, CancellationToken cancellationToken = default);
 
     /// <summary>Lấy một trang hóa đơn theo bộ lọc và tổng số bản ghi (không load hết vào RAM).</summary>

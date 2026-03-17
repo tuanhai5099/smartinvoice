@@ -15,6 +15,12 @@ public partial class CompanyEditViewModel : ObservableValidator
 {
     private readonly ICompanyAppService _companyService;
     private readonly Action<bool, string?> _closeCallback;
+    private readonly IConfirmationService _confirmationService;
+
+    /// <summary>Lần đăng nhập thất bại gần nhất do sai user/password (trong phiên popup này).</summary>
+    private string? _lastFailedUsername;
+    private string? _lastFailedPassword;
+    private bool _lastFailedWasWrongCredentials;
 
     [ObservableProperty]
     private bool _isAddMode = true;
@@ -56,9 +62,11 @@ public partial class CompanyEditViewModel : ObservableValidator
 
     public CompanyEditViewModel(
         ICompanyAppService companyService,
+        IConfirmationService confirmationService,
         Action<bool, string?> closeCallback)
     {
         _companyService = companyService;
+        _confirmationService = confirmationService;
         _closeCallback = closeCallback;
         ErrorsChanged += (_, _) => SaveCommand.NotifyCanExecuteChanged();
     }
@@ -120,6 +128,27 @@ public partial class CompanyEditViewModel : ObservableValidator
             return;
         if (IsBusy) return;
 
+        // Nếu lần trước đăng nhập sai user/password với đúng MST/mật khẩu này, hỏi lại trước khi tiếp tục
+        var currentUsername = Username?.Trim() ?? string.Empty;
+        var currentPassword = Password ?? string.Empty;
+        if (_lastFailedWasWrongCredentials
+            && string.Equals(currentUsername, _lastFailedUsername, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(currentPassword, _lastFailedPassword, StringComparison.Ordinal))
+        {
+            var confirmed = await _confirmationService.ConfirmAsync(
+                "Xác nhận đăng nhập",
+                "Lần trước đăng nhập với MST và mật khẩu hiện tại đã thất bại vì sai tên đăng nhập hoặc mật khẩu.\n\n"
+                + "Đăng nhập sai nhiều lần có thể khiến tài khoản hóa đơn điện tử bị khóa.\n\n"
+                + "Bạn có chắc chắn muốn tiếp tục đăng nhập với thông tin cấu hình hiện tại?"
+            ).ConfigureAwait(true);
+
+            if (!confirmed)
+            {
+                SetStatus("Đã hủy đăng nhập. Vui lòng kiểm tra lại MST và mật khẩu trước khi thử lại.", isError: true);
+                return;
+            }
+        }
+
         IsBusy = true;
         SetStatus("Đang xác thực và lấy token...", isError: false);
         try
@@ -130,12 +159,23 @@ public partial class CompanyEditViewModel : ObservableValidator
                 var result = await _companyService.AddCompanyWithLoginAsync(dto).ConfigureAwait(true);
                 if (result.Success)
                 {
+                    _lastFailedWasWrongCredentials = false;
+                    _lastFailedUsername = null;
+                    _lastFailedPassword = null;
                     SetStatus("Đã thêm công ty và lấy token thành công.", isError: false);
                     _closeCallback(true, null);
                 }
                 else
                 {
                     SetStatus(result.Message, isError: true);
+                    // Nếu lỗi là sai user/password, ghi lại cặp MST/mật khẩu để cảnh báo ở lần sau.
+                    if (!string.IsNullOrWhiteSpace(result.Message)
+                        && result.Message.Contains("Sai tên đăng nhập hoặc mật khẩu", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _lastFailedWasWrongCredentials = true;
+                        _lastFailedUsername = currentUsername;
+                        _lastFailedPassword = currentPassword;
+                    }
                 }
             }
             else
@@ -155,12 +195,22 @@ public partial class CompanyEditViewModel : ObservableValidator
                 var loginResult = await _companyService.LoginAndSyncProfileAsync(CompanyId).ConfigureAwait(true);
                 if (loginResult.Success)
                 {
+                    _lastFailedWasWrongCredentials = false;
+                    _lastFailedUsername = null;
+                    _lastFailedPassword = null;
                     SetStatus("Đã cập nhật và lấy token thành công.", isError: false);
                     _closeCallback(true, null);
                 }
                 else
                 {
                     SetStatus("Cập nhật đã lưu nhưng lấy token thất bại: " + (loginResult.Message ?? "Lỗi không xác định."), isError: true);
+                    if (!string.IsNullOrWhiteSpace(loginResult.Message)
+                        && loginResult.Message.Contains("Sai tên đăng nhập hoặc mật khẩu", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _lastFailedWasWrongCredentials = true;
+                        _lastFailedUsername = currentUsername;
+                        _lastFailedPassword = currentPassword;
+                    }
                     _closeCallback(true, loginResult.Message);
                 }
             }

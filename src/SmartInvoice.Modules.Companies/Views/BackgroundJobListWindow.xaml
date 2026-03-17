@@ -132,20 +132,28 @@
                 </Grid>
             </Border>
 
-            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
-                <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center"
+            <Grid Grid.Row="3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" VerticalAlignment="Center"
                            Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,16,0" />
-                <ui:Button Content="Hủy (job chờ)" Command="{Binding CancelCommand}"
-                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
-                <ui:Button Content="Xóa" Command="{Binding DeleteCommand}"
-                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
-                <ui:Button Content="Mở thư mục" Command="{Binding OpenFolderCommand}"
-                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
-                <ui:Button Content="Làm mới" Command="{Binding RefreshCommand}"
-                           Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
-                <ui:Button Content="Thử lại (job lỗi)" Command="{Binding RetryCommand}"
-                           Appearance="Secondary" Padding="12,6" FontSize="12" />
-            </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ui:Button Content="Mở thư mục" Command="{Binding OpenFolderCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                    <ui:Button Content="Làm mới" Command="{Binding RefreshCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                    <ui:Button Content="Thử lại (job lỗi)" Command="{Binding RetryCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                    <ui:Button Content="Hủy (job chờ)" Command="{Binding CancelCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                    <ui:Button Content="Xóa" Command="{Binding DeleteCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                    <ui:Button Content="Xóa tất cả" Command="{Binding DeleteAllCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" />
+                </StackPanel>
+            </Grid>
         </Grid>
     </Grid>
 </ui:FluentWindow>

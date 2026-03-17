@@ -1,15 +1,14 @@
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace SmartInvoice.Modules.Companies.Views;
 
-/// <summary>Cửa sổ popup thông báo góc phải màn hình (toast). Có tự đóng sau vài giây; user cũng có thể click để tắt sớm.</summary>
+/// <summary>Cửa sổ popup thông báo góc phải màn hình (toast). Có nút X để đóng; click vào thông báo sẽ mở Smart Invoice lên trước.</summary>
 public partial class ToastPopupWindow : Window
 {
-    /// <summary>Thời gian hiển thị trước khi tự đóng (giây).</summary>
     private const int AutoCloseSeconds = 10;
-
     private DispatcherTimer? _autoCloseTimer;
 
     public ToastPopupWindow(string title, string body, bool isError)
@@ -43,15 +42,48 @@ public partial class ToastPopupWindow : Window
         };
         _autoCloseTimer.Tick += (_, _) =>
         {
-            _autoCloseTimer.Stop();
+            _autoCloseTimer?.Stop();
             Close();
         };
         _autoCloseTimer.Start();
     }
 
-    private void Window_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (IsCloseButtonOrChild(e.OriginalSource))
+            return;
+        ActivateMainWindowAndClose();
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
         _autoCloseTimer?.Stop();
+        Close();
+    }
+
+    private static bool IsCloseButtonOrChild(object? source)
+    {
+        if (source is not DependencyObject dob) return false;
+        var current = dob;
+        while (current != null)
+        {
+            if (current is System.Windows.Controls.Button b && b.Name == "CloseButton")
+                return true;
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+        }
+        return false;
+    }
+
+    private void ActivateMainWindowAndClose()
+    {
+        _autoCloseTimer?.Stop();
+        var main = System.Windows.Application.Current?.MainWindow;
+        if (main != null)
+        {
+            if (main.WindowState == WindowState.Minimized)
+                main.WindowState = WindowState.Normal;
+            main.Activate();
+        }
         Close();
     }
 }

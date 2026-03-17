@@ -1,10 +1,12 @@
 namespace SmartInvoice.Core.Domain;
 
-/// <summary>Loại job nền. Hiện tại: tải hóa đơn, xuất Excel.</summary>
+/// <summary>Loại job nền: tải hóa đơn, xuất Excel, tải XML hàng loạt, tải PDF hàng loạt.</summary>
 public enum BackgroundJobType
 {
     DownloadInvoices = 1,
-    ExportExcel = 2
+    ExportExcel = 2,
+    DownloadXmlBulk = 3,
+    DownloadPdfBulk = 4
 }
 
 /// <summary>Trạng thái job nền.</summary>
@@ -73,6 +75,9 @@ public class BackgroundJob
 
     /// <summary>Số hóa đơn không có XML (API trả rỗng).</summary>
     public int XmlNoXmlCount { get; set; }
+
+    /// <summary>JSON payload cho job tải XML/PDF hàng loạt: InvoiceIds, ExportXmlFolderPath (chỉ XML).</summary>
+    public string? PayloadJson { get; set; }
 
     public DateTime CreatedAt { get; set; }
     public DateTime? StartedAt { get; set; }

@@ -59,7 +59,7 @@ public sealed class EasyInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
             var options = new LaunchOptions
             {
-                Headless = false,
+                Headless = true,
                 ExecutablePath = installedBrowser.GetExecutablePath(),
                 Args = new[] { "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage" }
             };
@@ -273,7 +273,7 @@ public sealed class EasyInvoicePdfFetcher : IKeyedInvoicePdfFetcher
         }
     }
 
-    /// <summary>Lấy PortalLink và Fkey từ cttkhac (ttruong = "PortalLink" / "Fkey", value = dlieu).</summary>
+    /// <summary>Lấy PortalLink và Fkey từ payload: ưu tiên cttkhac (ttruong = "PortalLink" / "Fkey"), fallback ttkhac nếu NCC đẩy vào đó.</summary>
     private static (string? PortalLink, string? Fkey) GetPortalLinkAndFkeyFromPayload(string payloadJson)
     {
         if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
@@ -282,30 +282,75 @@ public sealed class EasyInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             using var doc = JsonDocument.Parse(payloadJson);
             var root = doc.RootElement;
             var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-            if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array)
-                return (null, null);
 
             string? portalLink = null;
             string? fkey = null;
 
-            foreach (var item in arr.EnumerateArray())
+            // 1) Ưu tiên đọc từ cttkhac (PortalLink / Fkey) – giống cấu hình cũ
+            if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
-                if (item.ValueKind != JsonValueKind.Object) continue;
-                if (!item.TryGetProperty("ttruong", out var tt) || tt.ValueKind != JsonValueKind.String) continue;
-                var ttStr = tt.GetString();
-                if (string.IsNullOrWhiteSpace(ttStr)) continue;
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+                    if (!item.TryGetProperty("ttruong", out var tt) || tt.ValueKind != JsonValueKind.String) continue;
+                    var ttStr = tt.GetString();
+                    if (string.IsNullOrWhiteSpace(ttStr)) continue;
 
-                var dlieu = item.TryGetProperty("dlieu", out var dl) ? dl.GetString() : null;
-                if (string.IsNullOrWhiteSpace(dlieu) && item.TryGetProperty("dLieu", out var dL))
-                    dlieu = dL.GetString();
-                var value = string.IsNullOrWhiteSpace(dlieu) ? null : dlieu.Trim();
+                    var dlieu = item.TryGetProperty("dlieu", out var dl) ? dl.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(dlieu) && item.TryGetProperty("dLieu", out var dL))
+                        dlieu = dL.GetString();
+                    var value = string.IsNullOrWhiteSpace(dlieu) ? null : dlieu.Trim();
 
-                if (string.Equals(ttStr, "PortalLink", StringComparison.OrdinalIgnoreCase))
-                    portalLink = value;
-                else if (string.Equals(ttStr, "Fkey", StringComparison.OrdinalIgnoreCase))
-                    fkey = value;
+                    if (string.Equals(ttStr, "PortalLink", StringComparison.OrdinalIgnoreCase))
+                        portalLink = value;
+                    else if (string.Equals(ttStr, "Fkey", StringComparison.OrdinalIgnoreCase))
+                        fkey = value;
 
-                if (portalLink != null && fkey != null) break;
+                    if (portalLink != null && fkey != null) break;
+                }
+            }
+
+            // 2) Fallback: một số payload EasyInvoice có thể đẩy PortalLink/Fkey trong ttkhac
+            if ((portalLink == null || fkey == null) && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in ttkhac.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+
+                    // Kiểu 1: giống cttkhac – có ttruong + dlieu/dLieu
+                    if (item.TryGetProperty("ttruong", out var tt) && tt.ValueKind == JsonValueKind.String)
+                    {
+                        var ttStr = tt.GetString();
+                        if (!string.IsNullOrWhiteSpace(ttStr))
+                        {
+                            var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
+                                : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
+                            var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+
+                            if (string.Equals(ttStr.Trim(), "PortalLink", StringComparison.OrdinalIgnoreCase) && portalLink == null)
+                                portalLink = value;
+                            else if (string.Equals(ttStr.Trim(), "Fkey", StringComparison.OrdinalIgnoreCase) && fkey == null)
+                                fkey = value;
+                        }
+                    }
+
+                    // Kiểu 2: PortalLink/Fkey là property trong ttchung bên trong ttkhac
+                    if (item.TryGetProperty("ttchung", out var ttchung) && ttchung.ValueKind == JsonValueKind.Object)
+                    {
+                        if (portalLink == null && ttchung.TryGetProperty("PortalLink", out var p) && p.ValueKind == JsonValueKind.String)
+                        {
+                            var s = p.GetString();
+                            if (!string.IsNullOrWhiteSpace(s)) portalLink = s.Trim();
+                        }
+                        if (fkey == null && ttchung.TryGetProperty("Fkey", out var fk) && fk.ValueKind == JsonValueKind.String)
+                        {
+                            var s = fk.GetString();
+                            if (!string.IsNullOrWhiteSpace(s)) fkey = s.Trim();
+                        }
+                    }
+
+                    if (portalLink != null && fkey != null) break;
+                }
             }
 
             return (portalLink, fkey);

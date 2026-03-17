@@ -22,6 +22,43 @@ public static class AppDbContextSchemaMigrator
         EnsureBackgroundJobResultPathColumn(db);
         EnsureBackgroundJobReportColumns(db);
         EnsureBackgroundJobExportColumns(db);
+        EnsureBackgroundJobPayloadJsonColumn(db);
+    }
+
+    private static void EnsureBackgroundJobPayloadJsonColumn(DbContext db)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != System.Data.ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                connection.Open();
+            using var checkCmd = connection.CreateCommand();
+            checkCmd.CommandText = "PRAGMA table_info('BackgroundJobs');";
+            using var reader = checkCmd.ExecuteReader();
+            var hasPayloadJson = false;
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), "PayloadJson", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasPayloadJson = true;
+                    break;
+                }
+            }
+            if (!hasPayloadJson)
+            {
+                reader.Close();
+                using var alterCmd = connection.CreateCommand();
+                alterCmd.CommandText = "ALTER TABLE BackgroundJobs ADD COLUMN PayloadJson TEXT NULL;";
+                alterCmd.ExecuteNonQuery();
+            }
+        }
+        catch { /* best-effort */ }
+        finally
+        {
+            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
+                connection.Close();
+        }
     }
 
     private static void EnsureBackgroundJobExportColumns(DbContext db)

@@ -18,27 +18,58 @@ public sealed class EinvoiceLookupProvider : IInvoiceLookupProvider
             var root = doc.RootElement;
             var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
 
-            if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array)
-                return null;
-
             string? dcTc = null;
             string? maTc = null;
 
-            foreach (var item in arr.EnumerateArray())
+            static string NormalizeLabel(string? s)
             {
-                if (item.ValueKind != JsonValueKind.Object) continue;
-                var ttruong = item.TryGetProperty("ttruong", out var tt) ? tt.GetString() : null;
-                if (string.IsNullOrWhiteSpace(ttruong)) continue;
+                if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+                var lower = s.ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+                var sb = new System.Text.StringBuilder(lower.Length);
+                foreach (var ch in lower)
+                {
+                    var uc = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+                    if (uc == System.Globalization.UnicodeCategory.NonSpacingMark)
+                        continue;
+                    if (char.IsLetterOrDigit(ch))
+                        sb.Append(ch);
+                }
+                return sb.ToString();
+            }
 
-                var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                    : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+            static void ScanArrayForDcTcAndMaTc(JsonElement arr, ref string? dcTcRef, ref string? maTcRef)
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+                    var ttruong = item.TryGetProperty("ttruong", out var tt) ? tt.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(ttruong)) continue;
 
-                if (string.Equals(ttruong.Trim(), "DC TC", StringComparison.OrdinalIgnoreCase))
-                    dcTc = value;
-                else if (string.Equals(ttruong.Trim(), "Mã TC", StringComparison.OrdinalIgnoreCase)
-                         || string.Equals(ttruong.Trim(), "Ma TC", StringComparison.OrdinalIgnoreCase))
-                    maTc = value;
+                    var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
+                        : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
+                    var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+
+                    var norm = NormalizeLabel(ttruong);
+                    if (dcTcRef == null && (norm == "dctc" || norm.Contains("diachitracuu")))
+                        dcTcRef = value;
+                    else if (maTcRef == null && (norm == "matc" || norm.Contains("matracuu") || norm.Contains("manhanhoadon")))
+                        maTcRef = value;
+
+                    if (dcTcRef != null && maTcRef != null)
+                        break;
+                }
+            }
+
+            // 1) cttkhac
+            if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                ScanArrayForDcTcAndMaTc(arr, ref dcTc, ref maTc);
+            }
+
+            // 2) ttkhac (nếu NCC để DC TC / Mã TC ở đây)
+            if ((dcTc == null || maTc == null) && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
+            {
+                ScanArrayForDcTcAndMaTc(ttkhac, ref dcTc, ref maTc);
             }
 
             if (dcTc == null && maTc == null && string.IsNullOrWhiteSpace(sellerTaxCode))

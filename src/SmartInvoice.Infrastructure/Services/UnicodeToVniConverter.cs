@@ -144,7 +144,7 @@ public static class UnicodeToVniConverter
         { '\u1ECE', new VniBytes(79, 219) },  // Ỏ
         { '\u1ECF', new VniBytes(111, 251) }, // ỏ
         { '\u1ED0', new VniBytes(79, 213) },  // Ố
-        { '\u1ED1', new VniBytes(111, 245) }, // ố
+        { '\u1ED1', new VniBytes(111, 249) }, // ố (VNI o´: 0x6F,0xF9)
         { '\u1ED2', new VniBytes(79, 192) },  // Ồ
         { '\u1ED3', new VniBytes(111, 224) }, // ồ
         { '\u1ED4', new VniBytes(79, 197) },  // Ổ

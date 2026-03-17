@@ -55,12 +55,19 @@ public class AppBootstrapper : PrismBootstrapper
         // DryIoc mặc định Replace khi đăng ký cùng interface → dùng provider để Registry nhận đủ fetchers
         containerRegistry.Register<EhoadonInvoicePdfFetcher>();
         containerRegistry.Register<FastInvoicePdfFetcher>();
+        containerRegistry.Register<MinvoiceInvoicePdfFetcher>();
+        containerRegistry.Register<SmartsignInvoicePdfFetcher>();
+        containerRegistry.Register<VininvoiceInvoicePdfFetcher>();
+        containerRegistry.Register<IhoadonInvoicePdfFetcher>();
         containerRegistry.Register<MeinvoiceInvoicePdfFetcher>();
         containerRegistry.Register<EasyInvoicePdfFetcher>();
         containerRegistry.Register<ViettelInvoicePdfFetcher>();
+        containerRegistry.Register<VdsgInvoicePdfFetcher>();
         containerRegistry.Register<WinInvoicePdfFetcher>();
+        containerRegistry.Register<WinCommerceInvoicePdfFetcher>();
         containerRegistry.Register<EinvoiceInvoicePdfFetcher>();
         containerRegistry.Register<MerchantVnptInvoiceFetcher>();
+        containerRegistry.Register<SesGroupInvoicePdfFetcher>();
         containerRegistry.Register<HtInvoiceInvoicePdfFetcher>();
         containerRegistry.Register<InvoicePdfFetcherSkeleton>();
         containerRegistry.Register<IKeyedInvoicePdfFetcherProvider, KeyedInvoicePdfFetcherProvider>();

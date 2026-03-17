@@ -31,6 +31,16 @@ public class InvoiceRepository : IInvoiceRepository, IBackgroundJobRepository
             .FirstOrDefaultAsync(i => i.CompanyId == companyId && i.ExternalId == externalId, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Invoice>> GetByCompanyAndExternalIdsAsync(Guid companyId, IReadOnlyList<string> externalIds, CancellationToken cancellationToken = default)
+    {
+        if (externalIds == null || externalIds.Count == 0)
+            return Array.Empty<Invoice>();
+        var ids = externalIds.Distinct().ToList();
+        return await _db.Invoices.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && ids.Contains(i.ExternalId))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<Invoice>> GetByCompanyIdAsync(Guid companyId, CancellationToken cancellationToken = default)
     {
         return await _db.Invoices.AsNoTracking()

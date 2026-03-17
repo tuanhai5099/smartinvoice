@@ -92,6 +92,9 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
         var skip = (CurrentPage - 1) * PageSize;
         var page = _allJobs.Skip(skip).Take(PageSize).ToList();
         Jobs = new ObservableCollection<BackgroundJobDto>(page);
+        // Tự động focus vào job đầu tiên trên trang (nếu có)
+        if (Jobs.Count > 0)
+            SelectedJob = Jobs[0];
         PrevPageCommand.NotifyCanExecuteChanged();
         NextPageCommand.NotifyCanExecuteChanged();
     }
@@ -204,6 +207,37 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
     private bool CanDelete() => SelectedJob != null
         && SelectedJob.Status != BackgroundJobStatus.Running
         && !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanDeleteAll))]
+    private async Task DeleteAllAsync()
+    {
+        if (TotalCount == 0) return;
+        IsBusy = true;
+        try
+        {
+            // Xóa tất cả job không ở trạng thái Running (Pending/Completed/Failed/Cancelled)
+            var toDelete = _allJobs
+                .Where(j => j.Status != BackgroundJobStatus.Running)
+                .Select(j => j.Id)
+                .ToList();
+            foreach (var id in toDelete)
+            {
+                await _jobService.DeleteAsync(id).ConfigureAwait(true);
+            }
+            StatusMessage = $"Đã xóa {toDelete.Count} job.";
+            await LoadJobsAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Lỗi: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanDeleteAll() => !IsBusy && TotalCount > 0;
 
     [RelayCommand(CanExecute = nameof(CanOpenFolder))]
     private void OpenFolder()

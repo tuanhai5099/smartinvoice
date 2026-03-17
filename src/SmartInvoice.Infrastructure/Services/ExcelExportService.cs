@@ -179,7 +179,8 @@ public sealed class ExcelExportService : IExcelExportService
             ws.Cell(row, 5).Value = string.IsNullOrWhiteSpace(payload.Ngct) ? ngayLapStr : payload.Ngct;
             ws.Cell(row, 6).Value = isSold ? (inv.MstMua ?? "") : (inv.NbMst ?? "");
             var companyName = isSold ? (inv.NguoiMua ?? "") : (inv.NguoiBan ?? "");
-            ws.Cell(row, 7).Value = UnicodeToVniConverter.ToVniString(companyName);
+            var displayCompanyName = ToTitleCaseCompanyName(companyName);
+            ws.Cell(row, 7).Value = UnicodeToVniConverter.ToVniString(displayCompanyName);
             ws.Cell(row, 7).Style.Font.FontName = "VNI-Times";
             ws.Cell(row, 8).Value = (double)(inv.Tgtcthue ?? 0);
             ws.Cell(row, 8).Style.NumberFormat.Format = numberFormat;
@@ -187,13 +188,22 @@ public sealed class ExcelExportService : IExcelExportService
             ws.Cell(row, 9).Style.NumberFormat.Format = numberFormat;
             ws.Cell(row, 10).Value = (double)(inv.TongTien ?? 0);
             ws.Cell(row, 10).Style.NumberFormat.Format = numberFormat;
-            if (payload.ThueSuatNumeric.HasValue)
+            var rateNumeric = payload.ThueSuatNumeric;
+            if (!rateNumeric.HasValue && !string.IsNullOrWhiteSpace(payload.ThueSuatCl) && payload.ThueSuatCl != "0")
             {
-                ws.Cell(row, 11).Value = (double)payload.ThueSuatNumeric.Value;
-                ws.Cell(row, 11).Style.NumberFormat.Format = "0.00%";
+                var raw = payload.ThueSuatCl.Replace("%", "").Trim();
+                if (decimal.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedInv))
+                    rateNumeric = NormalizeThueSuatDecimal(parsedInv);
+                else if (decimal.TryParse(raw, NumberStyles.Any, CultureInfo.GetCultureInfo("vi-VN"), out var parsedVi))
+                    rateNumeric = NormalizeThueSuatDecimal(parsedVi);
             }
+
+            var thueSuatCell = ws.Cell(row, 11);
+            thueSuatCell.Style.NumberFormat.Format = "0.00%";
+            if (rateNumeric.HasValue)
+                thueSuatCell.Value = (double)rateNumeric.Value; // ví dụ 0.08 → hiển thị 8.00%
             else
-                ws.Cell(row, 11).Value = payload.ThueSuatCl;
+                thueSuatCell.Clear(); // không ghi chuỗi "0.08%" nữa, chỉ để trống nếu không parse được
             ws.Cell(row, 12).Value = TthaiToDisplay(inv.Tthai);
             ws.Cell(row, 13).Value = payload.TenCt;
             ws.Cell(row, 14).Value = payload.MaTraCuu;
@@ -271,7 +281,7 @@ public sealed class ExcelExportService : IExcelExportService
             ws.Cell(row, 4).Value = r.Ntao;
             ws.Cell(row, 5).Value = "";
             ws.Cell(row, 6).Value = r.Mst;
-            var detailCompanyName = r.CompanyName;
+            var detailCompanyName = ToTitleCaseCompanyName(r.CompanyName);
             ws.Cell(row, 7).Value = UnicodeToVniConverter.ToVniString(detailCompanyName);
             ws.Cell(row, 7).Style.Font.FontName = "VNI-Times";
             ws.Cell(row, 8).Value = UnicodeToVniConverter.ToVniString(r.TenHang);
@@ -281,8 +291,9 @@ public sealed class ExcelExportService : IExcelExportService
             ws.Cell(row, 10).Style.NumberFormat.Format = numberFormatDecimal;
             ws.Cell(row, 11).Value = r.Dgia;
             ws.Cell(row, 11).Style.NumberFormat.Format = numberFormat;
-            ws.Cell(row, 12).Value = r.TsuatPercent;
-            ws.Cell(row, 12).Style.NumberFormat.Format = numberFormat;
+            var tsPercent = r.TsuatPercent / 100m;
+            ws.Cell(row, 12).Value = (double)tsPercent;
+            ws.Cell(row, 12).Style.NumberFormat.Format = "0.00%";
             ws.Cell(row, 13).Value = r.Thtien;
             ws.Cell(row, 13).Style.NumberFormat.Format = numberFormat;
             ws.Cell(row, 14).Value = r.Thtien;
@@ -366,6 +377,30 @@ public sealed class ExcelExportService : IExcelExportService
             linkTraCuu = GetStr(root, "linktracuu") ?? GetStr(root, "LinkTraCuu") ?? "";
             loiTaiVe = GetStr(root, "errormessage") ?? GetStr(root, "ErrorMessage") ?? "";
 
+            // Bổ sung logic giống VLK crawler / HtInvoice:
+            // - Nếu chưa có, lấy DC TC (URL tra cứu) và Mã TC (mã tra cứu) từ cttkhac.
+            if (string.IsNullOrWhiteSpace(maTraCuu) || string.IsNullOrWhiteSpace(linkTraCuu))
+            {
+                var (searchUrl, maTc) = GetSearchUrlAndCodeFromCttkhac(root);
+                if (string.IsNullOrWhiteSpace(maTraCuu) && !string.IsNullOrWhiteSpace(maTc))
+                    maTraCuu = maTc;
+                if (string.IsNullOrWhiteSpace(linkTraCuu) && !string.IsNullOrWhiteSpace(searchUrl))
+                    linkTraCuu = searchUrl;
+            }
+
+            // - Nếu vẫn chưa có, dùng logic GetMatracuu (matracuu/linktracuu/qrcode/maQr hoặc trong cttkhac) giống file in hóa đơn.
+            if (string.IsNullOrWhiteSpace(maTraCuu) || string.IsNullOrWhiteSpace(linkTraCuu))
+            {
+                var qrOrCode = GetMatracuuFromPayload(root);
+                if (!string.IsNullOrWhiteSpace(qrOrCode))
+                {
+                    if (string.IsNullOrWhiteSpace(linkTraCuu) && qrOrCode.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                        linkTraCuu = qrOrCode;
+                    if (string.IsNullOrWhiteSpace(maTraCuu) && !qrOrCode.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                        maTraCuu = qrOrCode;
+                }
+            }
+
             if (root.TryGetProperty("ttoan", out var ttoan) && ttoan.TryGetProperty("thttltsuat", out var thtt) && thtt.ValueKind == JsonValueKind.Array)
             {
                 var first = thtt.EnumerateArray().FirstOrDefault();
@@ -413,6 +448,7 @@ public sealed class ExcelExportService : IExcelExportService
     /// <summary>Chuyển thuế suất từ API (8, 8%, 0.08) thành số Excel (0.08). 8% → 0.08, 10% → 0.1.</summary>
     private static decimal? ParseThueSuatToDecimal(JsonElement el, string rawStr)
     {
+        // Ưu tiên đọc từ các field số (tsuat/TSuat/ltsuat/LTSuat)
         if (GetDecimal(el, "tsuat") is decimal d)
             return NormalizeThueSuatDecimal(d);
         if (GetDecimal(el, "TSuat") is decimal d2)
@@ -421,11 +457,17 @@ public sealed class ExcelExportService : IExcelExportService
             return NormalizeThueSuatDecimal(d3);
         if (GetDecimal(el, "LTSuat") is decimal d4)
             return NormalizeThueSuatDecimal(d4);
+
+        // Fallback: parse từ chuỗi rawStr (8, 8%, 8,0, 0,08, ...)
         if (string.IsNullOrWhiteSpace(rawStr)) return null;
         rawStr = rawStr.Trim().Replace("%", "");
-        if (!decimal.TryParse(rawStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed))
-            return null;
-        return NormalizeThueSuatDecimal(parsed);
+        // 1) Thử theo InvariantCulture (dấu chấm thập phân)
+        if (decimal.TryParse(rawStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedInv))
+            return NormalizeThueSuatDecimal(parsedInv);
+        // 2) Thử theo vi-VN (dấu phẩy thập phân)
+        if (decimal.TryParse(rawStr, NumberStyles.Any, CultureInfo.GetCultureInfo("vi-VN"), out var parsedVi))
+            return NormalizeThueSuatDecimal(parsedVi);
+        return null;
     }
 
     private static decimal NormalizeThueSuatDecimal(decimal value)
@@ -438,7 +480,17 @@ public sealed class ExcelExportService : IExcelExportService
     {
         if (!e.TryGetProperty(name, out var p)) return null;
         if (p.ValueKind == JsonValueKind.Number && p.TryGetDecimal(out var d)) return d;
-        if (p.ValueKind == JsonValueKind.String && decimal.TryParse(p.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)) return parsed;
+        if (p.ValueKind == JsonValueKind.String)
+        {
+            var s = p.GetString();
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            // 1) Thử parse theo InvariantCulture
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedInv))
+                return parsedInv;
+            // 2) Thử parse theo vi-VN (dấu phẩy)
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.GetCultureInfo("vi-VN"), out var parsedVi))
+                return parsedVi;
+        }
         return null;
     }
 
@@ -463,6 +515,62 @@ public sealed class ExcelExportService : IExcelExportService
         if (p.ValueKind == JsonValueKind.Number && p.TryGetInt64(out var unix))
             return DateTimeOffset.FromUnixTimeMilliseconds(unix).DateTime.ToString("dd/MM/yyyy", CultureInfo.GetCultureInfo("vi-VN"));
         return null;
+    }
+
+    /// <summary>Lấy nội dung QR / mã tra cứu từ API (matracuu, MaTraCuu, linktracuu, LinkTraCuu, qrcode, maQr hoặc trong cttkhac) giống logic in hóa đơn.</summary>
+    private static string? GetMatracuuFromPayload(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        var s = GetStr(root, "matracuu") ?? GetStr(root, "MaTraCuu")
+            ?? GetStr(root, "linktracuu") ?? GetStr(root, "LinkTraCuu")
+            ?? GetStr(root, "qrcode") ?? GetStr(root, "maQr");
+        if (!string.IsNullOrWhiteSpace(s)) return s.Trim();
+        if (!root.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array) return null;
+        foreach (var item in arr.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("ttruong", out var tt)) continue;
+            var ttStr = tt.ValueKind == JsonValueKind.String ? tt.GetString() : null;
+            if (string.IsNullOrEmpty(ttStr)) continue;
+            if (ttStr.Contains("tra cứu", StringComparison.OrdinalIgnoreCase)
+                || ttStr.Contains("Mã tra cứu", StringComparison.OrdinalIgnoreCase)
+                || ttStr.Contains("matracuu", StringComparison.OrdinalIgnoreCase)
+                || ttStr.Contains("link", StringComparison.OrdinalIgnoreCase))
+            {
+                s = (GetStr(item, "dlieu") ?? GetStr(item, "dLieu"))?.Trim();
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Lấy DC TC (URL tra cứu) và Mã TC (mã tra cứu) từ cttkhac (giống HtInvoice crawler).</summary>
+    private static (string? SearchUrl, string? MaTraCuu) GetSearchUrlAndCodeFromCttkhac(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return (null, null);
+        if (!root.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return (null, null);
+
+        string? dcTc = null;
+        string? maTc = null;
+
+        foreach (var item in arr.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var ttruong = item.TryGetProperty("ttruong", out var tt) ? tt.GetString() : null;
+            if (string.IsNullOrWhiteSpace(ttruong)) continue;
+
+            var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
+                : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
+            var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+
+            if (string.Equals(ttruong.Trim(), "DC TC", StringComparison.OrdinalIgnoreCase))
+                dcTc = value;
+            else if (string.Equals(ttruong.Trim(), "Mã TC", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(ttruong.Trim(), "Ma TC", StringComparison.OrdinalIgnoreCase))
+                maTc = value;
+        }
+
+        return (dcTc, maTc);
     }
 
     /// <summary>Lấy tên hàng từ ttkhac (ttruong chứa "Tên hàng", "Tên sản phẩm") giống VLK crawl.</summary>

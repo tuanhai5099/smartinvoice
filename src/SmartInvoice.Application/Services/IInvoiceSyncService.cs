@@ -24,10 +24,14 @@ public interface IInvoiceSyncService
     /// </summary>
     Task<(IReadOnlyList<InvoiceDisplayDto> Page, int TotalCount, InvoiceSummaryDto Summary)> GetInvoicesPagedAsync(Guid companyId, InvoiceListFilterDto filter, int page, int pageSize, CancellationToken cancellationToken = default);
 
+    /// <summary>Lấy danh sách hóa đơn theo công ty và danh sách id (external id) — cho job tải XML/PDF hàng loạt.</summary>
+    Task<IReadOnlyList<InvoiceDisplayDto>> GetInvoicesByIdsAsync(Guid companyId, IReadOnlyList<string> invoiceIds, CancellationToken cancellationToken = default);
+
     /// <summary>
-    /// Tải XML cho tất cả hóa đơn trong danh sách, lưu vào thư mục đích. Báo cáo tiến độ qua progress.
+    /// Tải XML cho tất cả hóa đơn trong danh sách, lưu vào thư mục đích, tạo file ZIP và trả đường dẫn. Báo cáo tiến độ qua progress.
     /// </summary>
-    Task<DownloadXmlResult> DownloadInvoicesXmlAsync(Guid companyId, IReadOnlyList<InvoiceDisplayDto> invoices, string folderPath, IProgress<DownloadXmlProgress>? progress, CancellationToken cancellationToken = default);
+    /// <param name="zipOutputDirectory">Nếu có: thư mục lưu file ZIP (theo công ty). Null = dùng folderPath/ExportXmlZip.</param>
+    Task<DownloadXmlResult> DownloadInvoicesXmlAsync(Guid companyId, IReadOnlyList<InvoiceDisplayDto> invoices, string folderPath, IProgress<DownloadXmlProgress>? progress, CancellationToken cancellationToken = default, string? zipOutputDirectory = null);
 }
 
 public record SyncInvoicesResult(bool Success, string? Message, int TotalSynced = 0);

@@ -8,13 +8,9 @@ using SmartInvoice.Application.Services;
 namespace SmartInvoice.InvoicePdfFetchers;
 
 /// <summary>
-/// Lấy PDF hóa đơn từ E-Invoice (einvoice.vn) cho NCC mã số 0101300842.
-/// Quy trình:
-/// - Đọc DC TC (địa chỉ tra cứu) và Mã TC (mã nhận hóa đơn) từ cttkhac trong payload.
-/// - Mở trang tra cứu (mặc định https://einvoice.vn/tra-cuu nếu DC TC trống).
-/// - Điền Mã nhận hóa đơn (MaNhanHoaDon) và giải captcha 4 ký tự in hoa.
-/// - Bấm "TRA CỨU HÓA ĐƠN" → popup chi tiết → bấm "Tải hóa đơn" → chọn "Tải hóa đơn dạng PDF".
-/// - Đợi Chromium tải file (zip hoặc pdf) và trả về bytes PDF.
+/// Lấy PDF hóa đơn từ E-Invoice (einvoice.vn) cho NCC mã số 0101300842 (Thái Sơn).
+/// Hiện tại ưu tiên dùng cổng E-Invoice với Mã nhận hóa đơn (MaNhanHoaDon).
+/// Trong tương lai có thể bổ sung các cách khác (ví dụ QRCODE) theo thứ tự ưu tiên.
 /// </summary>
 public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
@@ -40,6 +36,32 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
     {
+        // Ưu tiên 1: nếu payload có QRCODE chứa link tải PDF trực tiếp thì dùng luôn.
+        var directUrl = GetPdfUrlFromQrCode(payloadJson);
+        if (!string.IsNullOrWhiteSpace(directUrl))
+        {
+            try
+            {
+                _logger.LogDebug("Einvoice PDF: tải PDF trực tiếp từ QRCODE URL {Url}", directUrl);
+                using var client = new HttpClient();
+                using var resp = await client.GetAsync(directUrl.Trim(), HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                resp.EnsureSuccessStatusCode();
+                var bytes = await resp.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+                if (bytes.Length > 0)
+                {
+                    var fileName = resp.Content.Headers.ContentDisposition?.FileName?.Trim('"').Trim();
+                    if (string.IsNullOrWhiteSpace(fileName) || !fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                        fileName = "invoice.pdf";
+                    return new InvoicePdfResult.Success(bytes, fileName);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Einvoice PDF: tải trực tiếp từ QRCODE URL thất bại, fallback sang cổng tra cứu.");
+            }
+        }
+
+        // Ưu tiên 2: cổng E-Invoice với Mã nhận hóa đơn.
         var (searchUrl, maNhanHoaDon) = GetSearchUrlAndCodeFromPayload(payloadJson);
         if (string.IsNullOrWhiteSpace(maNhanHoaDon))
         {
@@ -64,7 +86,7 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
             var options = new LaunchOptions
             {
-                Headless = false,
+                Headless = true,
                 ExecutablePath = installedBrowser.GetExecutablePath(),
                 Args = new[] { "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage" }
             };
@@ -97,19 +119,19 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Chụp ảnh captcha trực tiếp từ phần tử img#CaptchaImage thành file PNG, rồi dùng pipeline preprocess trong thư viện Captcha.
+                // Chụp ảnh captcha trực tiếp từ phần tử img#CaptchaImage thành stream PNG, rồi dùng pipeline preprocess trong thư viện Captcha (không lưu file tạm).
                 var captchaElement = await page.QuerySelectorAsync("#CaptchaImage").ConfigureAwait(false);
                 if (captchaElement == null)
                     return new InvoicePdfResult.Failure("Không tìm thấy ảnh captcha (#CaptchaImage) trên trang E-Invoice.");
 
-                var captchaPath = Path.Combine(downloadDir, $"einvoice_captcha_{attempt + 1}.png");
-                await captchaElement.ScreenshotAsync(
-                        captchaPath,
+                var captchaBytes = await captchaElement.ScreenshotDataAsync(
                         new ElementScreenshotOptions { Type = ScreenshotType.Png })
                     .ConfigureAwait(false);
-
-                captchaText = (await _captchaSolver.SolveFromFileAsync(captchaPath, cancellationToken).ConfigureAwait(false))
-                    ?.Trim().ToUpperInvariant();
+                await using (var ms = new MemoryStream(captchaBytes))
+                {
+                    captchaText = (await _captchaSolver.SolveFromStreamAsync(ms, cancellationToken).ConfigureAwait(false))
+                        ?.Trim().ToUpperInvariant();
+                }
 
                 if (string.IsNullOrEmpty(captchaText) || !FourUppercaseLetters.IsMatch(captchaText))
                 {
@@ -311,7 +333,221 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
         }
     }
 
-    /// <summary>Lấy DC TC (URL tra cứu) và Mã TC (Mã nhận hóa đơn) từ cttkhac hoặc trường gốc payload.</summary>
+    /// <summary>
+    /// Tìm đường dẫn PDF từ trường QRCODE trong JSON hóa đơn (ví dụ Thai Son có thể cung cấp sẵn link portal).
+    /// - Duyệt các root candidate: r, ndhdon, hdon, data[0].
+    /// - Tìm trong ttkhac/cttkhac hoặc field trực tiếp có tên chứa "qrcode".
+    /// - Giá trị có thể là URL đầy đủ hoặc chuỗi chứa URL.
+    /// </summary>
+    private static string? GetPdfUrlFromQrCode(string payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
+            foreach (var candidate in GetInvoiceRootCandidates(r))
+            {
+                var fromTtkhac = GetQrCodeFromTtkhac(candidate);
+                if (!string.IsNullOrWhiteSpace(fromTtkhac)) return ExtractUrl(fromTtkhac);
+
+                var fromCttkhac = GetQrCodeFromCttkhac(candidate);
+                if (!string.IsNullOrWhiteSpace(fromCttkhac)) return ExtractUrl(fromCttkhac);
+
+                var direct = GetQrCodeFromDirectFields(candidate);
+                if (!string.IsNullOrWhiteSpace(direct)) return ExtractUrl(direct);
+            }
+        }
+        catch
+        {
+            // ignore parse errors
+        }
+        return null;
+    }
+
+    private static IEnumerable<JsonElement> GetInvoiceRootCandidates(JsonElement r)
+    {
+        yield return r;
+        if (r.ValueKind != JsonValueKind.Object) yield break;
+        if (r.TryGetProperty("ndhdon", out var ndhdon) && ndhdon.ValueKind == JsonValueKind.Object)
+            yield return ndhdon;
+        if (r.TryGetProperty("hdon", out var hdon) && hdon.ValueKind == JsonValueKind.Object)
+            yield return hdon;
+        if (r.TryGetProperty("data", out var data))
+        {
+            if (data.ValueKind == JsonValueKind.Object)
+                yield return data;
+            else if (data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0)
+                yield return data[0];
+        }
+    }
+
+    private static bool IsQrCodeName(string name)
+    {
+        var n = SmartInvoice.Core.StringNormalization.NormalizeForComparison(name);
+        return n.Contains("qrcode", StringComparison.Ordinal);
+    }
+
+    private static string? GetQrCodeFromTtkhac(JsonElement r)
+    {
+        if (!r.TryGetProperty("ttkhac", out var ttkhac) || ttkhac.ValueKind != JsonValueKind.Array) return null;
+        foreach (var outer in ttkhac.EnumerateArray())
+        {
+            if (outer.ValueKind == JsonValueKind.Object && outer.TryGetProperty("ttchung", out var ttchung))
+            {
+                var v = GetQrCodeFromTtchung(ttchung);
+                if (!string.IsNullOrWhiteSpace(v)) return v;
+            }
+            else
+            {
+                var v = GetQrCodeFromCttkhacLikeItem(outer);
+                if (!string.IsNullOrWhiteSpace(v)) return v;
+            }
+        }
+        return null;
+    }
+
+    private static string? GetQrCodeFromTtchung(JsonElement ttchung)
+    {
+        if (ttchung.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in ttchung.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var tt = item.TryGetProperty("ttruong", out var t) ? t.GetString() : null;
+                if (string.IsNullOrWhiteSpace(tt) || !IsQrCodeName(tt)) continue;
+                var dl = TryGetDataValue(item);
+                if (!string.IsNullOrWhiteSpace(dl)) return dl;
+            }
+        }
+        else if (ttchung.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in ttchung.EnumerateObject())
+            {
+                if (!IsQrCodeName(prop.Name)) continue;
+                if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    var s = prop.Value.GetString();
+                    if (!string.IsNullOrWhiteSpace(s)) return s;
+                }
+                if (prop.Value.ValueKind == JsonValueKind.Object)
+                {
+                    var s = TryGetDataValue(prop.Value);
+                    if (!string.IsNullOrWhiteSpace(s)) return s;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static string? GetQrCodeFromCttkhac(JsonElement r)
+    {
+        if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array) return null;
+        foreach (var item in arr.EnumerateArray())
+        {
+            var v = GetQrCodeFromCttkhacLikeItem(item);
+            if (!string.IsNullOrWhiteSpace(v)) return v;
+        }
+        return null;
+    }
+
+    private static string? GetQrCodeFromCttkhacLikeItem(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object) return null;
+        var tt = item.TryGetProperty("ttruong", out var t) ? t.GetString() : null;
+        if (string.IsNullOrWhiteSpace(tt) || !IsQrCodeName(tt)) return null;
+        var dl = TryGetDataValue(item);
+        return string.IsNullOrWhiteSpace(dl) ? null : dl;
+    }
+
+    private static string? GetQrCodeFromDirectFields(JsonElement r)
+    {
+        if (r.ValueKind != JsonValueKind.Object) return null;
+        foreach (var prop in r.EnumerateObject())
+        {
+            if (!IsQrCodeName(prop.Name)) continue;
+            if (prop.Value.ValueKind == JsonValueKind.String)
+            {
+                var s = prop.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+            if (prop.Value.ValueKind == JsonValueKind.Object)
+            {
+                var s = TryGetDataValue(prop.Value);
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Lấy giá trị thực tế từ object: ưu tiên dlieu/dLieu, sau đó giatri/value, cuối cùng property string đầu tiên khác ttruong.</summary>
+    private static string? TryGetDataValue(JsonElement obj)
+    {
+        if (obj.ValueKind != JsonValueKind.Object) return null;
+
+        if (obj.TryGetProperty("dlieu", out var d) && d.ValueKind == JsonValueKind.String)
+        {
+            var s = d.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+        if (obj.TryGetProperty("dLieu", out var dL) && dL.ValueKind == JsonValueKind.String)
+        {
+            var s = dL.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+
+        if (obj.TryGetProperty("giatri", out var gt) && gt.ValueKind == JsonValueKind.String)
+        {
+            var s = gt.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+        if (obj.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String)
+        {
+            var s = v.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+
+        foreach (var prop in obj.EnumerateObject())
+        {
+            if (string.Equals(prop.Name, "ttruong", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (prop.Value.ValueKind == JsonValueKind.String)
+            {
+                var s = prop.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Trích URL đầu tiên nhìn giống http/https trong chuỗi QRCode.</summary>
+    private static string? ExtractUrl(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var s = value.Trim();
+        // Nếu bản thân chuỗi là URL
+        if (s.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            s.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return s;
+
+        // Tìm http/https trong chuỗi dài hơn
+        var idx = s.IndexOf("http://", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+            idx = s.IndexOf("https://", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return null;
+
+        var rest = s[idx..];
+        // Cắt đến khoảng trắng đầu tiên (nếu có)
+        var spaceIdx = rest.IndexOf(' ');
+        if (spaceIdx > 0)
+            rest = rest[..spaceIdx];
+
+        return rest;
+    }
+
+    /// <summary>Lấy DC TC (URL tra cứu) và Mã TC (Mã nhận hóa đơn) từ cttkhac/ttkhac hoặc trường gốc payload.</summary>
     private static (string? SearchUrl, string? MaNhanHoaDon) GetSearchUrlAndCodeFromPayload(string payloadJson)
     {
         if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
@@ -324,7 +560,24 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             string? dcTc = null;
             string? maTc = null;
 
-            if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            static string NormalizeLabel(string? s)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+                // Chuẩn hóa: lowercase + bỏ dấu + bỏ khoảng trắng/ký tự không phải chữ/số.
+                var lower = s.ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
+                var sb = new System.Text.StringBuilder(lower.Length);
+                foreach (var ch in lower)
+                {
+                    var uc = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+                    if (uc == System.Globalization.UnicodeCategory.NonSpacingMark)
+                        continue; // bỏ dấu
+                    if (char.IsLetterOrDigit(ch))
+                        sb.Append(ch);
+                }
+                return sb.ToString();
+            }
+
+            static void ScanArrayForDcTcAndMaTc(JsonElement arr, ref string? dcTcRef, ref string? maTcRef)
             {
                 foreach (var item in arr.EnumerateArray())
                 {
@@ -336,17 +589,27 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
                         : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
                     var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
 
-                    if (string.Equals(ttruong.Trim(), "DC TC", StringComparison.OrdinalIgnoreCase))
-                        dcTc = value;
-                    else if (string.Equals(ttruong.Trim(), "Mã TC", StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(ttruong.Trim(), "Ma TC", StringComparison.OrdinalIgnoreCase))
-                        maTc = value;
-                    else if (maTc == null && (ttruong.Contains("Mã TC", StringComparison.OrdinalIgnoreCase)
-                                || ttruong.Contains("Mã tra cứu", StringComparison.OrdinalIgnoreCase)
-                                || ttruong.Contains("Mã nhận hóa đơn", StringComparison.OrdinalIgnoreCase)
-                                || ttruong.Contains("MaNhanHoaDon", StringComparison.OrdinalIgnoreCase)))
-                        maTc = value;
+                    var norm = NormalizeLabel(ttruong); // ví dụ "DC TC" → "dctc", "Mã TC" → "matc"
+                    if (dcTcRef == null && (norm == "dctc" || norm.Contains("diachitracuu")))
+                        dcTcRef = value;
+                    else if (maTcRef == null && (norm == "matc" || norm.Contains("matracuu") || norm.Contains("manhanhoadon")))
+                        maTcRef = value;
+
+                    if (dcTcRef != null && maTcRef != null)
+                        break;
                 }
+            }
+
+            // 1) cttkhac
+            if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                ScanArrayForDcTcAndMaTc(arr, ref dcTc, ref maTc);
+            }
+
+            // 2) ttkhac – một số payload có thể đặt DC TC / Mã TC ở đây
+            if ((dcTc == null || maTc == null) && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
+            {
+                ScanArrayForDcTcAndMaTc(ttkhac, ref dcTc, ref maTc);
             }
 
             // Fallback: đọc từ trường gốc payload (một số API trả mã tra cứu ở root)

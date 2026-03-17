@@ -15,8 +15,9 @@
         <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,6,0,0"
                     IsHitTestVisible="False">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <ui:SymbolIcon Symbol="Receipt24" FontSize="16" Margin="0,0,8,0"
-                               Foreground="{DynamicResource SiAccent}" />
+                <!-- Icon app ở title bar: dùng chính SmartInvoice.ico -->
+                <Image Source="pack://application:,,,/SmartInvoice.UI;component/SmartInvoice.ico"
+                       Width="16" Height="16" Margin="0,0,8,0" />
                 <TextBlock Text="Smart Invoice" FontSize="13" FontWeight="SemiBold"
                            Foreground="{DynamicResource SiTextPrimary}" VerticalAlignment="Center" />
             </StackPanel>

@@ -4,7 +4,7 @@
         Title="Thông báo" Width="412" Height="140" MinWidth="352" MaxWidth="452"
         WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
         Topmost="True" AllowsTransparency="True" Background="Transparent"
-        WindowStartupLocation="Manual" Loaded="Window_Loaded" MouseDown="Window_MouseDown">
+        WindowStartupLocation="Manual" Loaded="Window_Loaded" PreviewMouseDown="Window_PreviewMouseDown">
     <Border Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
             BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
             BorderThickness="1" CornerRadius="8" Padding="14,12" x:Name="MainBorder">
@@ -13,9 +13,9 @@
         </Border.Effect>
         <Grid>
             <Grid.ColumnDefinitions>
-                <!-- Cột icon: đủ chỗ cho 44x44 + margin phải, tránh icon bị cắt -->
                 <ColumnDefinition Width="56" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <Grid Grid.Column="0" Width="44" Height="44" Margin="0,0,12,0" VerticalAlignment="Center" HorizontalAlignment="Left">
                 <Ellipse x:Name="IconEllipse" />
@@ -24,10 +24,17 @@
                 </Viewbox>
             </Grid>
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                <TextBlock Text="Smart Invoice thông báo" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" Margin="0,0,0,4" />
+                <TextBlock Text="Smart Invoice — Thông báo" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" Margin="0,0,0,4" />
                 <TextBlock x:Name="TitleText" FontWeight="SemiBold" FontSize="13" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
                 <TextBlock x:Name="BodyText" Margin="0,4,0,0" FontSize="12" TextWrapping="Wrap" Foreground="#666" MaxHeight="48" TextTrimming="CharacterEllipsis" />
             </StackPanel>
+            <Button x:Name="CloseButton" Grid.Column="2" Width="28" Height="28" Margin="4,0,0,0"
+                    VerticalAlignment="Top" HorizontalAlignment="Right"
+                    ToolTip="Đóng thông báo" Click="CloseButton_Click"
+                    Cursor="Hand" BorderThickness="0" Background="Transparent"
+                    Padding="0">
+                <TextBlock Text="✕" FontSize="14" Foreground="#666" />
+            </Button>
         </Grid>
     </Border>
 </Window>

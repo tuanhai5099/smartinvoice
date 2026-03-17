@@ -9,10 +9,12 @@ namespace SmartInvoice.Modules.Companies.Services;
 public sealed class CompanyEditDialogService : ICompanyEditDialogService
 {
     private readonly ICompanyAppService _companyService;
+    private readonly IConfirmationService _confirmationService;
 
-    public CompanyEditDialogService(ICompanyAppService companyService)
+    public CompanyEditDialogService(ICompanyAppService companyService, IConfirmationService confirmationService)
     {
         _companyService = companyService;
+        _confirmationService = confirmationService;
     }
 
     public Task<CompanyEditDialogResult> ShowAddAsync(CancellationToken cancellationToken = default)
@@ -43,7 +45,7 @@ public sealed class CompanyEditDialogService : ICompanyEditDialogService
                 app.Dispatcher.BeginInvoke(() => dialogWindow.Close());
         }
 
-        var vm = new CompanyEditViewModel(_companyService, CloseCallback);
+        var vm = new CompanyEditViewModel(_companyService, _confirmationService, CloseCallback);
         if (isAdd)
             vm.SetAddMode();
         else

@@ -49,13 +49,17 @@ public sealed class InvoicePdfFetcherRegistry : IInvoicePdfFetcherRegistry
     }
 
     /// <summary>
-    /// Chuẩn hóa key nhà cung cấp: trim, nếu toàn ký tự số thì bỏ 0 ở đầu (\"0101360697\" → \"101360697\").
-    /// Giúp map đúng dù payload có/không có số 0 đầu.
+    /// Chuẩn hóa key nhà cung cấp: trim, cắt phần suffix sau dấu '-' (\"0106026495-001\" → \"0106026495\"),
+    /// nếu sau đó toàn ký tự số thì bỏ 0 ở đầu (\"0101360697\" → \"101360697\").
+    /// Giúp map đúng dù payload có/không có số 0 đầu hoặc có hậu tố chi nhánh.
     /// </summary>
     private static string NormalizeKey(string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return string.Empty;
         var trimmed = key.Trim();
+        var dashIndex = trimmed.IndexOf('-');
+        if (dashIndex > 0)
+            trimmed = trimmed[..dashIndex];
         var allDigits = true;
         for (var i = 0; i < trimmed.Length; i++)
         {

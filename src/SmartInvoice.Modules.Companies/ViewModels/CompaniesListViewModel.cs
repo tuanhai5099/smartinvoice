@@ -79,6 +79,9 @@ public partial class CompaniesListViewModel : ObservableObject
     /// <summary>Có ít nhất 1 công ty trong danh sách hay không (dùng để enable/disable nút chạy nền).</summary>
     public bool HasCompanies => TotalCount > 0;
 
+    /// <summary>Track: công ty nào lần gần nhất login thất bại do sai user/password (khi bấm Đồng bộ hóa đơn).</summary>
+    private readonly Dictionary<Guid, bool> _companyHasWrongCredentialsLogin = new();
+
     /// <summary>Tổng chiều cao vùng card (số hàng × CardRowHeight) để UniformGrid chia đều chiều cao mỗi hàng.</summary>
     public int TotalCardAreaHeight => Math.Max(CardRowHeight, (int)Math.Ceiling(PagedCompanies.Count / 2.0) * CardRowHeight);
 
@@ -312,6 +315,24 @@ public partial class CompaniesListViewModel : ObservableObject
             return;
         }
         if (IsBusy) return;
+
+        // Nếu lần trước login cho công ty này thất bại do sai user/password, cảnh báo trước khi tiếp tục
+        if (_companyHasWrongCredentialsLogin.TryGetValue(target.Id, out var hadWrongCred) && hadWrongCred)
+        {
+            var confirmed = await _confirmationService.ConfirmAsync(
+                "Cảnh báo đăng nhập",
+                "Lần trước đăng nhập hóa đơn điện tử cho công ty này đã thất bại vì sai tên đăng nhập hoặc mật khẩu.\n\n"
+                + "Đăng nhập sai nhiều lần có thể khiến tài khoản hóa đơn điện tử bị khóa.\n\n"
+                + "Bạn có chắc chắn muốn tiếp tục đăng nhập với thông tin cấu hình hiện tại?"
+            ).ConfigureAwait(true);
+
+            if (!confirmed)
+            {
+                StatusMessage = "Đã hủy đồng bộ hóa đơn. Vui lòng kiểm tra lại MST đăng nhập và mật khẩu trong phần Chỉnh sửa công ty trước khi thử lại.";
+                return;
+            }
+        }
+
         IsBusy = true;
         StatusMessage = "Đang kiểm tra token...";
         try
@@ -320,6 +341,7 @@ public partial class CompaniesListViewModel : ObservableObject
             if (tokenValid)
             {
                 StatusMessage = string.Empty;
+                _companyHasWrongCredentialsLogin[target.Id] = false;
                 _navigationService.NavigateToInvoiceList(target.Id);
                 return;
             }
@@ -328,11 +350,17 @@ public partial class CompaniesListViewModel : ObservableObject
             if (result.Success)
             {
                 StatusMessage = string.Empty;
+                _companyHasWrongCredentialsLogin[target.Id] = false;
                 _navigationService.NavigateToInvoiceList(target.Id);
             }
             else
             {
                 StatusMessage = "Đăng nhập thất bại: " + (result.Message ?? "Lỗi không xác định.");
+                if (!string.IsNullOrWhiteSpace(result.Message)
+                    && result.Message.Contains("Sai tên đăng nhập hoặc mật khẩu", StringComparison.OrdinalIgnoreCase))
+                {
+                    _companyHasWrongCredentialsLogin[target.Id] = true;
+                }
             }
         }
         catch (Exception ex)

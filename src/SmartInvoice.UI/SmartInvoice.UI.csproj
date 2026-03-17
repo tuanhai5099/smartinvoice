@@ -8,6 +8,9 @@
     <RootNamespace>SmartInvoice.UI</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="..\..\assets\SmartInvoice.ico" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Prism.DryIoc" Version="9.0.537" />
     <PackageReference Include="Prism.Wpf" Version="9.0.537" />
     <PackageReference Include="WPF-UI" Version="3.0.5" />

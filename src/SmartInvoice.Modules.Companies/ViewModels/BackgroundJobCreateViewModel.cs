@@ -27,6 +27,10 @@ public partial class BackgroundJobCreateViewModel : ObservableObject
     [ObservableProperty]
     private bool _isSold = true;
 
+    /// <summary>Mua vào được chọn hay không (cho phép chọn đồng thời cả Bán ra và Mua vào).</summary>
+    [ObservableProperty]
+    private bool _isPurchased;
+
     [ObservableProperty]
     private DateTime _fromDate = DateTime.Today.AddMonths(-1);
 
@@ -80,15 +84,22 @@ public partial class BackgroundJobCreateViewModel : ObservableObject
         try
         {
             var list = await _companyService.GetAllAsync().ConfigureAwait(true);
-            Companies = new ObservableCollection<CompanyDto>(list);
+            var ordered = list
+                .OrderBy(c => string.IsNullOrWhiteSpace(c.CompanyName) ? c.CompanyCode : c.CompanyName,
+                    StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            Companies = new ObservableCollection<CompanyDto>(ordered);
 
-            if (_defaultCompanyId.HasValue && list.Any(c => c.Id == _defaultCompanyId.Value))
+            if (_defaultCompanyId.HasValue && ordered.Any(c => c.Id == _defaultCompanyId.Value))
                 SelectedCompanyId = _defaultCompanyId;
             else
-                SelectedCompanyId = list.FirstOrDefault()?.Id;
+                SelectedCompanyId = ordered.FirstOrDefault()?.Id;
 
             if (_defaultIsSold.HasValue)
+            {
                 IsSold = _defaultIsSold.Value;
+                IsPurchased = !_defaultIsSold.Value;
+            }
         }
         catch (Exception ex)
         {
@@ -130,33 +141,45 @@ public partial class BackgroundJobCreateViewModel : ObservableObject
             StatusMessage = $"Khoảng ngày phải từ 01/08/2022 đến {MaxJobDate:dd/MM/yyyy} (không chọn tương lai).";
             return;
         }
+        if (!IsSold && !IsPurchased)
+        {
+            StatusMessage = "Chọn ít nhất một loại hóa đơn (Bán ra hoặc Mua vào).";
+            return;
+        }
         IsBusy = true;
         StatusMessage = "Đang tạo job nền...";
         try
         {
-            var dto = new BackgroundJobCreateDto(
-                SelectedCompanyId.Value,
-                IsSold,
-                FromDate.Date,
-                ToDate.Date,
-                IncludeDetail,
-                DownloadXml,
-                DownloadPdf,
-                ExportExcel);
-            await _backgroundJobService.EnqueueDownloadInvoicesAsync(dto).ConfigureAwait(true);
+            var directions = new List<bool>();
+            if (IsSold) directions.Add(true);
+            if (IsPurchased) directions.Add(false);
 
-            if (ExportExcel)
+            foreach (var isSold in directions)
             {
-                // Nếu không đồng bộ chi tiết: xuất Excel Tổng hợp.
-                // Nếu có đồng bộ chi tiết: xuất Excel Chi tiết.
-                var exportOptions = new ExportExcelCreateDto(
+                var dto = new BackgroundJobCreateDto(
                     SelectedCompanyId.Value,
-                    IsSold,
+                    isSold,
                     FromDate.Date,
                     ToDate.Date,
-                    IncludeDetail ? "chitiet" : "tonghop",
-                    IsSummaryOnly: !IncludeDetail);
-                await _backgroundJobService.EnqueueExportExcelAsync(exportOptions).ConfigureAwait(true);
+                    IncludeDetail,
+                    DownloadXml,
+                    DownloadPdf,
+                    ExportExcel);
+                await _backgroundJobService.EnqueueDownloadInvoicesAsync(dto).ConfigureAwait(true);
+
+                if (ExportExcel)
+                {
+                    // Nếu không đồng bộ chi tiết: xuất Excel Tổng hợp.
+                    // Nếu có đồng bộ chi tiết: xuất Excel Chi tiết.
+                    var exportOptions = new ExportExcelCreateDto(
+                        SelectedCompanyId.Value,
+                        isSold,
+                        FromDate.Date,
+                        ToDate.Date,
+                        IncludeDetail ? "chitiet" : "tonghop",
+                        IsSummaryOnly: !IncludeDetail);
+                    await _backgroundJobService.EnqueueExportExcelAsync(exportOptions).ConfigureAwait(true);
+                }
             }
 
             StatusMessage = "Đã thêm job tải nền (và xuất Excel nếu đã chọn).";

@@ -11,8 +11,8 @@ public static class InvoiceFileStoragePathHelper
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SmartInvoice");
 
     /// <summary>
-    /// Thư mục gốc theo công ty: Documents\SmartInvoice\{mã công ty}.
-    /// Dưới đó tạo thư mục tháng_năm (yyyy_MM) rồi lưu XML/PDF.
+    /// Thư mục gốc theo công ty cho PDF: Documents\SmartInvoice\{mã công ty}.
+    /// Dưới đó tạo thư mục tháng_năm (yyyy_MM) rồi lưu PDF.
     /// </summary>
     public static string GetCompanyRootPath(string? companyCodeOrNameOrId)
     {
@@ -23,6 +23,16 @@ public static class InvoiceFileStoragePathHelper
         if (name.Length > 64)
             name = name[..64];
         return Path.Combine(GetAppRootPath(), name);
+    }
+
+    /// <summary>
+    /// Thư mục gốc theo công ty cho XML: Documents\SmartInvoice\{mã công ty}\XML.
+    /// Dưới đó tạo thư mục tháng_năm (yyyy_MM) rồi lưu file XML.
+    /// </summary>
+    public static string GetCompanyXmlRootPath(string? companyCodeOrNameOrId)
+    {
+        var companyRoot = GetCompanyRootPath(companyCodeOrNameOrId);
+        return Path.Combine(companyRoot, "XML");
     }
 
     /// <summary>Tên thư mục tháng_năm theo ngày hóa đơn (vd. 2025_02). Nếu không có ngày thì dùng tháng hiện tại.</summary>
