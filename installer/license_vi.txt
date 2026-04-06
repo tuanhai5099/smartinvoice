@@ -1,0 +1,7 @@
+SMARTINVOICE - ĐIỀU KHOẢN SỬ DỤNG
+
+1. Phần mềm SmartInvoice được cung cấp dưới dạng công cụ hỗ trợ tải và quản lý hóa đơn điện tử.
+2. Người dùng chịu trách nhiệm tuân thủ các quy định pháp luật liên quan đến hóa đơn, thuế và bảo mật tài khoản hóa đơn điện tử.
+3. Tác giả/đơn vị phát triển không chịu trách nhiệm đối với các thiệt hại phát sinh do việc sử dụng phần mềm không đúng mục đích hoặc vi phạm pháp luật.
+4. Bằng việc tiếp tục cài đặt và sử dụng, bạn đồng ý với các điều khoản trên.
+

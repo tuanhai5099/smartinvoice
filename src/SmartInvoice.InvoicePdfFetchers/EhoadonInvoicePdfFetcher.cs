@@ -1,8 +1,9 @@
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using System.Xml.Linq;
 using PuppeteerSharp;
 using SmartInvoice.Application.Services;
+using SmartInvoice.Application.Services.InvoicePayloadParsing;
 
 namespace SmartInvoice.InvoicePdfFetchers;
 
@@ -11,6 +12,7 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// Mở trang Lookup?InvoiceGUID={id}, click dropdown Download → LinkDownPDF, chờ file tải và trả về bytes.
 /// Dùng Puppeteer Sharp (Chromium headless) để scrape vì trang dùng JS và dropdown.
 /// </summary>
+[InvoiceProvider("0101360697", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
 public sealed class EhoadonInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
     /// <summary>Mã số thuế nhà cung cấp dịch vụ hóa đơn (BKAV).</summary>
@@ -31,7 +33,7 @@ public sealed class EhoadonInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
     {
-        var invoiceId = GetInvoiceIdFromPayload(payloadJson);
+        var invoiceId = EhoadonInvoiceIdParsing.GetInvoiceIdFromPayload(payloadJson);
         if (string.IsNullOrWhiteSpace(invoiceId))
         {
             _logger.LogWarning("Ehoadon PDF: payload không có trường id.");
@@ -157,31 +159,4 @@ public sealed class EhoadonInvoicePdfFetcher : IKeyedInvoicePdfFetcher
         }
     }
 
-    private static string? GetInvoiceIdFromPayload(string payloadOrXml)
-    {
-        if (string.IsNullOrWhiteSpace(payloadOrXml)) return null;
-        var trimmed = payloadOrXml.Trim();
-
-        // Trường hợp eHoadon: nhận vào XML, lấy DLHDon/@Id làm InvoiceGUID.
-        if (trimmed.StartsWith("<", StringComparison.Ordinal))
-        {
-            try
-            {
-                var xdoc = XDocument.Parse(trimmed);
-                // XML mẫu: <HDon><DLHDon Id="...">...</DLHDon>...</HDon>
-                var dlhDon = xdoc.Root?
-                    .Descendants()
-                    .FirstOrDefault(e => string.Equals(e.Name.LocalName, "DLHDon", StringComparison.OrdinalIgnoreCase));
-                var idAttr = dlhDon?.Attribute("Id")?.Value;
-                return string.IsNullOrWhiteSpace(idAttr) ? null : idAttr.Trim();
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        // Payload không phải XML hợp lệ → không lấy được InvoiceGUID.
-        return null;
-    }
 }

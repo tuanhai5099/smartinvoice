@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
 using SmartInvoice.Application.Services;
+using SmartInvoice.Application.Services.InvoicePayloadParsing;
 
 namespace SmartInvoice.InvoicePdfFetchers;
 
@@ -11,6 +12,7 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// Lấy PDF hóa đơn từ EasyInvoice (NCC 0105987432): mở PortalLink từ cttkhac, điền Fkey, giải captcha 4 số,
 /// bấm Tra cứu, đợi modal → bấm "Tải PDF & đính kèm" → tải zip → giải nén lấy file PDF.
 /// </summary>
+[InvoiceProvider("0105987432", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
 public sealed class EasyInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
     /// <summary>Mã số thuế nhà cung cấp dịch vụ hóa đơn (EasyInvoice).</summary>
@@ -37,7 +39,7 @@ public sealed class EasyInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
     {
-        var (portalLink, fkey) = GetPortalLinkAndFkeyFromPayload(payloadJson);
+        var (portalLink, fkey) = EasyInvoicePortalParsing.GetPortalLinkAndFkeyFromPayload(payloadJson);
         if (string.IsNullOrWhiteSpace(portalLink) || string.IsNullOrWhiteSpace(fkey))
         {
             _logger.LogWarning("EasyInvoice PDF: payload thiếu cttkhac PortalLink hoặc Fkey.");
@@ -270,94 +272,6 @@ public sealed class EasyInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             {
                 // best effort cleanup
             }
-        }
-    }
-
-    /// <summary>Lấy PortalLink và Fkey từ payload: ưu tiên cttkhac (ttruong = "PortalLink" / "Fkey"), fallback ttkhac nếu NCC đẩy vào đó.</summary>
-    private static (string? PortalLink, string? Fkey) GetPortalLinkAndFkeyFromPayload(string payloadJson)
-    {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            var root = doc.RootElement;
-            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-
-            string? portalLink = null;
-            string? fkey = null;
-
-            // 1) Ưu tiên đọc từ cttkhac (PortalLink / Fkey) – giống cấu hình cũ
-            if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in arr.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-                    if (!item.TryGetProperty("ttruong", out var tt) || tt.ValueKind != JsonValueKind.String) continue;
-                    var ttStr = tt.GetString();
-                    if (string.IsNullOrWhiteSpace(ttStr)) continue;
-
-                    var dlieu = item.TryGetProperty("dlieu", out var dl) ? dl.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(dlieu) && item.TryGetProperty("dLieu", out var dL))
-                        dlieu = dL.GetString();
-                    var value = string.IsNullOrWhiteSpace(dlieu) ? null : dlieu.Trim();
-
-                    if (string.Equals(ttStr, "PortalLink", StringComparison.OrdinalIgnoreCase))
-                        portalLink = value;
-                    else if (string.Equals(ttStr, "Fkey", StringComparison.OrdinalIgnoreCase))
-                        fkey = value;
-
-                    if (portalLink != null && fkey != null) break;
-                }
-            }
-
-            // 2) Fallback: một số payload EasyInvoice có thể đẩy PortalLink/Fkey trong ttkhac
-            if ((portalLink == null || fkey == null) && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in ttkhac.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-
-                    // Kiểu 1: giống cttkhac – có ttruong + dlieu/dLieu
-                    if (item.TryGetProperty("ttruong", out var tt) && tt.ValueKind == JsonValueKind.String)
-                    {
-                        var ttStr = tt.GetString();
-                        if (!string.IsNullOrWhiteSpace(ttStr))
-                        {
-                            var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                                : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                            var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
-
-                            if (string.Equals(ttStr.Trim(), "PortalLink", StringComparison.OrdinalIgnoreCase) && portalLink == null)
-                                portalLink = value;
-                            else if (string.Equals(ttStr.Trim(), "Fkey", StringComparison.OrdinalIgnoreCase) && fkey == null)
-                                fkey = value;
-                        }
-                    }
-
-                    // Kiểu 2: PortalLink/Fkey là property trong ttchung bên trong ttkhac
-                    if (item.TryGetProperty("ttchung", out var ttchung) && ttchung.ValueKind == JsonValueKind.Object)
-                    {
-                        if (portalLink == null && ttchung.TryGetProperty("PortalLink", out var p) && p.ValueKind == JsonValueKind.String)
-                        {
-                            var s = p.GetString();
-                            if (!string.IsNullOrWhiteSpace(s)) portalLink = s.Trim();
-                        }
-                        if (fkey == null && ttchung.TryGetProperty("Fkey", out var fk) && fk.ValueKind == JsonValueKind.String)
-                        {
-                            var s = fk.GetString();
-                            if (!string.IsNullOrWhiteSpace(s)) fkey = s.Trim();
-                        }
-                    }
-
-                    if (portalLink != null && fkey != null) break;
-                }
-            }
-
-            return (portalLink, fkey);
-        }
-        catch
-        {
-            return (null, null);
         }
     }
 }

@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Windows;
 using Microsoft.EntityFrameworkCore;
+using Prism.Ioc;
 using Microsoft.Extensions.Logging;
 using SmartInvoice.Application.Services;
 using SmartInvoice.Core.Repositories;
@@ -9,6 +10,8 @@ using SmartInvoice.Infrastructure.HoaDonDienTu;
 using SmartInvoice.Infrastructure.Persistence;
 using SmartInvoice.Infrastructure.Services;
 using SmartInvoice.Infrastructure.Services.Pdf;
+using SmartInvoice.Infrastructure.Services.Pdf.Lookup;
+using SmartInvoice.Infrastructure.Services.Pdf.Lookup.Rules;
 using SmartInvoice.InvoicePdfFetchers;
 using SmartInvoice.Modules.Companies;
 using SmartInvoice.Modules.Companies.Services;
@@ -19,6 +22,9 @@ namespace SmartInvoice.Bootstrapper;
 
 public class AppBootstrapper : PrismBootstrapper
 {
+    /// <summary>Dùng khi Exit để gọi <see cref="IBackgroundJobService.NotifyApplicationStopping"/>.</summary>
+    public static IContainerProvider? ContainerInstance { get; private set; }
+
     protected override void ConfigureModuleCatalog(IModuleCatalog moduleCatalog)
     {
         moduleCatalog.AddModule<CompaniesModule>();
@@ -39,9 +45,12 @@ public class AppBootstrapper : PrismBootstrapper
         containerRegistry.Register<IInvoiceDetailViewService, InvoiceDetailViewService>();
         containerRegistry.Register<IExcelExportService, ExcelExportService>();
         containerRegistry.RegisterSingleton<IUnitOfWorkFactory, UnitOfWorkFactory>();
+        containerRegistry.RegisterSingleton<IScoSyncRecoveryPlanner, ScoSyncRecoveryPlanner>();
+        containerRegistry.RegisterSingleton<IInvoicePdfProviderResolver, InvoicePdfProviderResolver>();
         containerRegistry.RegisterSingleton<IBackgroundJobService, BackgroundJobService>();
         containerRegistry.RegisterSingleton<IBackgroundJobDialogService, BackgroundJobDialogService>();
         containerRegistry.RegisterSingleton<SmartInvoice.Application.Services.IBackgroundJobCompletedNotifier, SmartInvoice.Modules.Companies.Services.BackgroundJobToastNotificationService>();
+        containerRegistry.RegisterSingleton<SmartInvoice.Application.Services.IBackgroundJobLiveProgressNotifier, SmartInvoice.Modules.Companies.Services.BackgroundJobLiveProgressNotifier>();
 
         containerRegistry.RegisterSingleton<ILoggerFactory>(_ => AppLog.LoggerFactory);
         containerRegistry.RegisterSingleton<HttpClient>();
@@ -67,13 +76,31 @@ public class AppBootstrapper : PrismBootstrapper
         containerRegistry.Register<WinCommerceInvoicePdfFetcher>();
         containerRegistry.Register<EinvoiceInvoicePdfFetcher>();
         containerRegistry.Register<MerchantVnptInvoiceFetcher>();
+        containerRegistry.Register<GrabInvoicePdfFetcher>();
         containerRegistry.Register<SesGroupInvoicePdfFetcher>();
         containerRegistry.Register<HtInvoiceInvoicePdfFetcher>();
         containerRegistry.Register<InvoicePdfFetcherSkeleton>();
         containerRegistry.Register<IKeyedInvoicePdfFetcherProvider, KeyedInvoicePdfFetcherProvider>();
         containerRegistry.Register<IInvoicePdfFetcherRegistry, InvoicePdfFetcherRegistry>();
-        // Gợi ý tra cứu (link, mã tra cứu) theo nhà cung cấp – tách biệt khỏi fetcher PDF để có thể chạy ở server.
-        containerRegistry.RegisterSingleton<IInvoiceLookupProviderRegistry, InvoiceLookupProviderRegistry>();
+        containerRegistry.RegisterSingleton<IInvoiceLookupCatalog>(_ =>
+        {
+            var resolver = _.Resolve<IInvoicePdfProviderResolver>();
+            var lf = _.Resolve<ILoggerFactory>();
+            ILookupResolutionRule[] rules =
+            {
+                new EasyInvoiceLookupRule(),
+                new WinInvoiceLookupRule(),
+                new EhoadonInvoiceLookupRule(),
+                new EinvoiceInvoiceLookupRule(),
+                new FastInvoiceLookupRule(),
+                new HtInvoiceLookupRule(),
+                new MeinvoiceInvoiceLookupRule(),
+                new ViettelInvoiceLookupRule(),
+            };
+            return new InvoiceLookupCatalog(resolver, rules, lf);
+        });
+        containerRegistry.RegisterSingleton<IInvoiceProviderOrchestrator, InvoiceProviderOrchestrator>();
+        containerRegistry.Register<IInvoiceXmlPreparationService, InvoiceXmlPreparationService>();
         containerRegistry.Register<IInvoicePdfService, InvoicePdfService>();
 
         containerRegistry.RegisterSingleton<ILoginAttemptTracker, LoginAttemptTracker>();
@@ -85,6 +112,7 @@ public class AppBootstrapper : PrismBootstrapper
 
     protected override Window CreateShell()
     {
+        ContainerInstance = Container;
         using (var db = Container.Resolve<AppDbContext>())
         {
             db.Database.EnsureCreated();

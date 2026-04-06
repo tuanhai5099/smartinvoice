@@ -31,15 +31,34 @@ public interface IInvoiceSyncService
     /// Tải XML cho tất cả hóa đơn trong danh sách, lưu vào thư mục đích, tạo file ZIP và trả đường dẫn. Báo cáo tiến độ qua progress.
     /// </summary>
     /// <param name="zipOutputDirectory">Nếu có: thư mục lưu file ZIP (theo công ty). Null = dùng folderPath/ExportXmlZip.</param>
+    /// <param name="folderPath">Gốc lưu XML từng HĐ: Documents\SmartInvoice\{Mã công ty}\XML — mỗi file trong folderPath\yyyy_MM\.</param>
+    /// <param name="zipOutputDirectory">Thư mục đặt file ZIP gom nhanh; null → folderPath\ExportXmlZip.</param>
     Task<DownloadXmlResult> DownloadInvoicesXmlAsync(Guid companyId, IReadOnlyList<InvoiceDisplayDto> invoices, string folderPath, IProgress<DownloadXmlProgress>? progress, CancellationToken cancellationToken = default, string? zipOutputDirectory = null);
+
+    /// <summary>Gọi lại API chi tiết cho từng ExternalId, cập nhật PayloadJson / LineItemsJson khi thành công.</summary>
+    Task<InvoiceDetailRefreshResult> RefreshInvoiceDetailsAsync(Guid companyId, IReadOnlyList<string> externalIds, IProgress<int>? progress = null, CancellationToken cancellationToken = default);
 }
 
-public record SyncInvoicesResult(bool Success, string? Message, int TotalSynced = 0);
+/// <param name="ScoListIncomplete">True if sco-query list API failed for at least one month (invoices from cash registers may be missing).</param>
+/// <param name="ScoDetailFailedExternalIds">Subset of detail failures that are SCO (may tính tiền) invoices.</param>
+public record SyncInvoicesResult(
+    bool Success,
+    string? Message,
+    int TotalSynced = 0,
+    IReadOnlyList<string>? DetailFetchFailedExternalIds = null,
+    bool ScoListIncomplete = false,
+    IReadOnlyList<string>? ScoDetailFailedExternalIds = null)
+{
+    /// <summary>Chi tiết từng HĐ không lấy được chi tiết API (ký hiệu, mẫu số, số, lý do).</summary>
+    public IReadOnlyList<InvoiceFailureItem>? DetailFailureItems { get; init; }
+}
+
+public record InvoiceDetailRefreshResult(int SuccessCount, int FailedCount, IReadOnlyList<string> StillFailedExternalIds);
 
 public record DownloadXmlProgress(int Current, int Total, string? CurrentFileName, DownloadXmlItemResult? ItemResult = null);
 
 /// <summary>Kết quả tải XML cho một hóa đơn: thành công, không có XML (API trả về rỗng), hoặc lỗi.</summary>
-public record DownloadXmlItemResult(string InvoiceKey, string SoHoaDonDisplay, bool Success, bool NoXml, string? Message);
+public record DownloadXmlItemResult(string InvoiceKey, string SoHoaDonDisplay, bool Success, bool NoXml, string? Message, string? ExternalInvoiceId = null);
 
 /// <summary>Kết quả tải XML: số tải thành công, thất bại, không có XML.</summary>
 public record DownloadXmlResult(bool Success, string? Message, int DownloadedCount = 0, int FailedCount = 0, int NoXmlCount = 0, string? ZipPath = null);
@@ -58,6 +77,8 @@ public record InvoiceListFilterDto(
     string? FilterTenNguoiBan,
     string? FilterMstLoaiTru,
     string? FilterLoaiTruBenBan,
+    string? FilterProviderTaxCode,
+    string? FilterTvanTaxCode,
     string? SortBy = null,
     bool SortDescending = true
 );
@@ -106,7 +127,9 @@ public record InvoiceDisplayDto(
     string? CounterpartyMst = null,
     short XmlStatus = 0,
     string? XmlBaseName = null,
-    decimal? ExchangeRate = null
+    decimal? ExchangeRate = null,
+    string? ProviderTaxCode = null,
+    string? TvanTaxCode = null
 )
 {
     /// <summary>Thông tin đối tác hiển thị: Tên công ty (mã số thuế) + ngoại tệ (nếu có).</summary>

@@ -6,7 +6,11 @@ public enum BackgroundJobType
     DownloadInvoices = 1,
     ExportExcel = 2,
     DownloadXmlBulk = 3,
-    DownloadPdfBulk = 4
+    DownloadPdfBulk = 4,
+    /// <summary>Chỉ gọi lại API chi tiết cho danh sách ExternalId (PayloadJson).</summary>
+    RefreshInvoiceDetails = 5,
+    /// <summary>Phục hồi ngầm hóa đơn SCO: có thể đồng bộ lại khoảng ngày và/hoặc refresh chi tiết nhiều wave (PayloadJson).</summary>
+    ScoRecovery = 6
 }
 
 /// <summary>Trạng thái job nền.</summary>
@@ -76,8 +80,20 @@ public class BackgroundJob
     /// <summary>Số hóa đơn không có XML (API trả rỗng).</summary>
     public int XmlNoXmlCount { get; set; }
 
+    /// <summary>PDF thành công (job <see cref="DownloadInvoices"/> có bước PDF; không dùng cho job PDF bulk — bulk dùng Xml*).</summary>
+    public int PdfDownloadedCount { get; set; }
+
+    /// <summary>PDF thất bại (job DownloadInvoices + DownloadPdf).</summary>
+    public int PdfFailedCount { get; set; }
+
+    /// <summary>PDF bỏ qua / chưa hỗ trợ (job DownloadInvoices + DownloadPdf).</summary>
+    public int PdfSkippedCount { get; set; }
+
     /// <summary>JSON payload cho job tải XML/PDF hàng loạt: InvoiceIds, ExportXmlFolderPath (chỉ XML).</summary>
     public string? PayloadJson { get; set; }
+
+    /// <summary>JSON tóm tắt lỗi (detailFailedIds, xmlFailedIds, pdfFailedIds — ExternalId).</summary>
+    public string? FailureSummaryJson { get; set; }
 
     public DateTime CreatedAt { get; set; }
     public DateTime? StartedAt { get; set; }

@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Markup;
 using System.Windows.Threading;
 using Microsoft.Extensions.Logging;
+using SmartInvoice.Application.Services;
 
 namespace SmartInvoice.Bootstrapper;
 
@@ -50,6 +51,21 @@ public partial class App : System.Windows.Application
                 MessageBoxImage.Error);
             Shutdown(1);
         }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            if (AppBootstrapper.ContainerInstance?.Resolve(typeof(IBackgroundJobService)) is IBackgroundJobService jobs)
+                jobs.NotifyApplicationStopping();
+        }
+        catch
+        {
+            // best-effort khi thoát
+        }
+
+        base.OnExit(e);
     }
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

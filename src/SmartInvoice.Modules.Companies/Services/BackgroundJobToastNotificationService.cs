@@ -19,7 +19,12 @@ public sealed class BackgroundJobToastNotificationService : IBackgroundJobComple
 
                 var (title, body) = BuildTitleAndBody(job);
                 var isFailed = job.Status == Core.Domain.BackgroundJobStatus.Failed;
+                var app = System.Windows.Application.Current;
                 var toast = new Views.ToastPopupWindow(title, body, isFailed);
+                if (app?.MainWindow != null)
+                    toast.Owner = app.MainWindow;
+                // Show (không ShowDialog): tránh kẹt với cửa sổ modal khác và không chặn luồng UI.
+                toast.Topmost = true;
                 toast.Show();
             });
         }
@@ -37,10 +42,19 @@ public sealed class BackgroundJobToastNotificationService : IBackgroundJobComple
             Core.Domain.BackgroundJobType.ExportExcel => "Xuất Excel",
             Core.Domain.BackgroundJobType.DownloadXmlBulk => "Tải XML hàng loạt",
             Core.Domain.BackgroundJobType.DownloadPdfBulk => "Tải PDF hàng loạt",
+            Core.Domain.BackgroundJobType.RefreshInvoiceDetails => "Chạy lại chi tiết",
+            Core.Domain.BackgroundJobType.ScoRecovery => "Phục hồi SCO",
             _ => "Đồng bộ hóa đơn"
         };
         var companyPart = string.IsNullOrWhiteSpace(job.CompanyName) ? "" : $" — {job.CompanyName.Trim()}";
-        var title = isFailed ? $"{typeLabel}{companyPart} — Thất bại" : $"{typeLabel}{companyPart} — Xong";
+        var hasPartialIssue = !isFailed
+            && job.XmlFailedCount > 0
+            && job.Type is Core.Domain.BackgroundJobType.RefreshInvoiceDetails or Core.Domain.BackgroundJobType.ScoRecovery;
+        var title = isFailed
+            ? $"{typeLabel}{companyPart} — Thất bại"
+            : hasPartialIssue
+                ? $"{typeLabel}{companyPart} — Xong (còn lỗi)"
+                : $"{typeLabel}{companyPart} — Xong";
 
         // Ưu tiên hiển thị mô tả job giống cột \"Mô tả\" ở màn hình quản lý
         var description = string.IsNullOrWhiteSpace(job.Description) ? "" : job.Description.Trim();
@@ -50,7 +64,15 @@ public sealed class BackgroundJobToastNotificationService : IBackgroundJobComple
         if (!string.IsNullOrWhiteSpace(job.LastError))
             detail = job.LastError;
         else if (!string.IsNullOrWhiteSpace(job.ResultPath))
-            detail = $"File ZIP: {job.ResultPath}";
+        {
+            var p = job.ResultPath.Trim();
+            if (p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                detail = $"File ZIP: {p}";
+            else if (p.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".xls", StringComparison.OrdinalIgnoreCase))
+                detail = $"File: {p}";
+            else
+                detail = $"Thư mục XML (vào các thư mục yyyy_MM bên trong): {p}";
+        }
         else
             detail = job.ProgressDisplayText;
 

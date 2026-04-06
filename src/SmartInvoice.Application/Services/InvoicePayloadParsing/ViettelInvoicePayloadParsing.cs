@@ -1,33 +1,15 @@
 using System.Text.Json;
-using SmartInvoice.Application.Services;
 using SmartInvoice.Core;
 
-namespace SmartInvoice.Infrastructure.Services.Pdf;
+namespace SmartInvoice.Application.Services.InvoicePayloadParsing;
 
-/// <summary>Gợi ý tra cứu cho Viettel (0100109106): portal vinvoice.viettel.vn + mã số bí mật trong cttkhac hoặc ttkhac&gt;ttchung.</summary>
-public sealed class ViettelLookupProvider : IInvoiceLookupProvider
+/// <summary>Parse nbmst + mã số bí mật (cttkhac/ttkhac) dùng chung cho PDF Viettel và rule tra cứu.</summary>
+public static class ViettelInvoicePayloadParsing
 {
-    public string ProviderKey => "0100109106";
-
-    private const string LookupUrl = "https://vinvoice.viettel.vn";
-
-    public InvoiceLookupSuggestion? GetSuggestion(string payloadJson, string? sellerTaxCode)
+    public static bool TryParsePayload(string payloadJson, out string? supplierTaxCode, out string? reservationCode)
     {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
-
-        var reservationCode = GetReservationCodeFromPayload(payloadJson);
-
-        return new InvoiceLookupSuggestion(
-            ProviderKey,
-            "Viettel",
-            LookupUrl,
-            string.IsNullOrWhiteSpace(reservationCode) ? null : reservationCode.Trim(),
-            string.IsNullOrWhiteSpace(sellerTaxCode) ? null : sellerTaxCode.Trim());
-    }
-
-    private static string? GetReservationCodeFromPayload(string payloadJson)
-    {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
+        supplierTaxCode = null;
+        reservationCode = null;
         try
         {
             using var doc = JsonDocument.Parse(payloadJson);
@@ -35,20 +17,25 @@ public sealed class ViettelLookupProvider : IInvoiceLookupProvider
             var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
             foreach (var candidate in GetInvoiceRootCandidates(r))
             {
-                var fromCttkhac = GetMaSoBiMatFromCttkhac(candidate);
-                if (!string.IsNullOrWhiteSpace(fromCttkhac)) return fromCttkhac.Trim();
-                var fromTtchung = GetMaSoBiMatFromTtkhacTtchung(candidate);
-                if (!string.IsNullOrWhiteSpace(fromTtchung)) return fromTtchung.Trim();
+                if (string.IsNullOrWhiteSpace(supplierTaxCode) && candidate.TryGetProperty("nbmst", out var nbmstProp))
+                {
+                    var nbmst = nbmstProp.GetString()?.Trim();
+                    if (!string.IsNullOrEmpty(nbmst))
+                        supplierTaxCode = nbmst;
+                }
+                if (string.IsNullOrWhiteSpace(reservationCode))
+                    reservationCode = GetMaSoBiMatFromPayload(candidate);
+                if (!string.IsNullOrWhiteSpace(supplierTaxCode) && !string.IsNullOrWhiteSpace(reservationCode))
+                    return true;
             }
-            return null;
+            return !string.IsNullOrWhiteSpace(supplierTaxCode) && !string.IsNullOrWhiteSpace(reservationCode);
         }
         catch
         {
-            return null;
+            return false;
         }
     }
 
-    /// <summary>Trả về các node có thể chứa cttkhac/ttkhac: r, ndhdon, hdon, data (hoặc data[0]).</summary>
     private static IEnumerable<JsonElement> GetInvoiceRootCandidates(JsonElement r)
     {
         yield return r;
@@ -66,6 +53,13 @@ public sealed class ViettelLookupProvider : IInvoiceLookupProvider
         }
     }
 
+    private static string? GetMaSoBiMatFromPayload(JsonElement r)
+    {
+        var fromCttkhac = GetMaSoBiMatFromCttkhac(r);
+        if (!string.IsNullOrWhiteSpace(fromCttkhac)) return fromCttkhac.Trim();
+        return GetMaSoBiMatFromTtkhacTtchung(r);
+    }
+
     private static string? GetMaSoBiMatFromCttkhac(JsonElement r)
     {
         if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array) return null;
@@ -81,7 +75,6 @@ public sealed class ViettelLookupProvider : IInvoiceLookupProvider
         return null;
     }
 
-    /// <summary>Đọc mã số bí mật từ ttkhac[].ttchung (một số payload Viettel MST 0100109106 đặt ở đây).</summary>
     private static string? GetMaSoBiMatFromTtkhacTtchung(JsonElement r)
     {
         if (!r.TryGetProperty("ttkhac", out var ttkhac) || ttkhac.ValueKind != JsonValueKind.Array) return null;
@@ -136,15 +129,10 @@ public sealed class ViettelLookupProvider : IInvoiceLookupProvider
             || n == "reservationcode" || n.Contains("reservationcode", StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// Lấy giá trị dữ liệu thực sự từ một object Viettel: ưu tiên dlieu/dLieu, sau đó thử các property string khác (giatri, value, ...).
-    /// Dùng chung cho cả cttkhac và ttkhac.ttchung để tăng khả năng bắt được "Mã số bí mật".
-    /// </summary>
     private static string? TryGetDataValue(JsonElement obj)
     {
         if (obj.ValueKind != JsonValueKind.Object) return null;
 
-        // 1) Ưu tiên dlieu / dLieu (theo chuẩn cttkhac)
         if (obj.TryGetProperty("dlieu", out var d) && d.ValueKind == JsonValueKind.String)
         {
             var s = d.GetString();
@@ -156,7 +144,6 @@ public sealed class ViettelLookupProvider : IInvoiceLookupProvider
             if (!string.IsNullOrWhiteSpace(s)) return s;
         }
 
-        // 2) Thử một số key phổ biến khác: giatri, value
         if (obj.TryGetProperty("giatri", out var gt) && gt.ValueKind == JsonValueKind.String)
         {
             var s = gt.GetString();
@@ -168,7 +155,6 @@ public sealed class ViettelLookupProvider : IInvoiceLookupProvider
             if (!string.IsNullOrWhiteSpace(s)) return s;
         }
 
-        // 3) Fallback: lấy property string đầu tiên khác ttruong
         foreach (var prop in obj.EnumerateObject())
         {
             if (string.Equals(prop.Name, "ttruong", StringComparison.OrdinalIgnoreCase))

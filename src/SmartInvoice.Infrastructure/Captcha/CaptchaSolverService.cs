@@ -5,11 +5,6 @@ using SmartInvoice.Captcha.Prediction;
 
 namespace SmartInvoice.Infrastructure.Captcha;
 
-/// <summary>
-/// Giải captcha bằng thư viện SmartInvoice.Captcha (PaddleOCR).
-/// Hóa đơn điện tử: không preprocess, chỉ cần ảnh nền trắng.
-/// Mỗi lần giải dùng một CaptchaSolver mới (create/dispose) để tránh lỗi "PaddlePredictor run failed" khi reuse engine.
-/// </summary>
 public class CaptchaSolverService : ICaptchaSolverService
 {
     private readonly PreprocessOptions _preprocessOptions;

@@ -21,6 +21,9 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// - Đợi bảng kết quả xuất hiện, tìm dòng đầu tiên và link "Tải file pdf" trong cột Tải file.
 /// - Lấy href, chuyển thành URL tuyệt đối rồi tải bytes PDF trả về.
 /// </summary>
+[InvoiceProvider("VNPT-MERCHANT", InvoiceProviderMatchKind.SellerTaxCode, MayRequireUserIntervention = true)]
+// MST NCC trên payload (msttcgp) – Tập đoàn VNPT; map sang cùng fetcher merchant (subdomain theo nbmst trong ResolveMerchantConfig).
+[InvoiceProvider("0100684378", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
 public sealed class MerchantVnptInvoiceFetcher : IKeyedInvoicePdfFetcher
 {
     /// <summary>MST nhà cung cấp dịch vụ VNPT – dùng để mapping registry theo tvandnkntt khi có.</summary>

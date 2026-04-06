@@ -49,4 +49,10 @@ public class Invoice
     /// Kết hợp với thư mục cấu hình (ExportXmlFolderPath) để tìm đúng nơi chứa XML/HTML.
     /// </summary>
     public string? XmlBaseName { get; set; }
+
+    /// <summary>Mã số thuế tổ chức cung cấp dịch vụ hóa đơn (msttcgp) – denormalized từ payload để lọc nhanh.</summary>
+    public string? ProviderTaxCode { get; set; }
+
+    /// <summary>Mã số thuế tổ chức TVAN đăng ký kết nối (tvanDnKntt) – denormalized từ payload để lọc nhanh.</summary>
+    public string? TvanTaxCode { get; set; }
 }

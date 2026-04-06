@@ -1,17 +1,14 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
-using SmartInvoice.Application.Services;
 
-namespace SmartInvoice.Infrastructure.Services.Pdf;
+namespace SmartInvoice.Application.Services.InvoicePayloadParsing;
 
-/// <summary>Gợi ý tra cứu cho E-Invoice (0101300842): DC TC + Mã TC trong cttkhac.</summary>
-public sealed class EinvoiceLookupProvider : IInvoiceLookupProvider
+public static class EinvoiceTraCuuParsing
 {
-    public string ProviderKey => "0101300842";
-
-    public InvoiceLookupSuggestion? GetSuggestion(string payloadJson, string? sellerTaxCode)
+    public static (string? SearchUrl, string? MaNhanHoaDon) GetSearchUrlAndCodeFromPayload(string payloadJson)
     {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
-
+        if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
         try
         {
             using var doc = JsonDocument.Parse(payloadJson);
@@ -24,12 +21,12 @@ public sealed class EinvoiceLookupProvider : IInvoiceLookupProvider
             static string NormalizeLabel(string? s)
             {
                 if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-                var lower = s.ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
-                var sb = new System.Text.StringBuilder(lower.Length);
+                var lower = s.ToLowerInvariant().Normalize(NormalizationForm.FormD);
+                var sb = new StringBuilder(lower.Length);
                 foreach (var ch in lower)
                 {
-                    var uc = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
-                    if (uc == System.Globalization.UnicodeCategory.NonSpacingMark)
+                    var uc = CharUnicodeInfo.GetUnicodeCategory(ch);
+                    if (uc == UnicodeCategory.NonSpacingMark)
                         continue;
                     if (char.IsLetterOrDigit(ch))
                         sb.Append(ch);
@@ -60,34 +57,35 @@ public sealed class EinvoiceLookupProvider : IInvoiceLookupProvider
                 }
             }
 
-            // 1) cttkhac
             if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
                 ScanArrayForDcTcAndMaTc(arr, ref dcTc, ref maTc);
             }
 
-            // 2) ttkhac (nếu NCC để DC TC / Mã TC ở đây)
             if ((dcTc == null || maTc == null) && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
             {
                 ScanArrayForDcTcAndMaTc(ttkhac, ref dcTc, ref maTc);
             }
 
-            if (dcTc == null && maTc == null && string.IsNullOrWhiteSpace(sellerTaxCode))
-                return null;
+            if (string.IsNullOrWhiteSpace(maTc))
+            {
+                maTc = GetStr(r, "maNhanHoaDon") ?? GetStr(r, "MaNhanHoaDon")
+                    ?? GetStr(r, "matracuu") ?? GetStr(r, "MaTraCuu")
+                    ?? GetStr(r, "maTc") ?? GetStr(r, "MaTC");
+            }
 
-            var url = string.IsNullOrWhiteSpace(dcTc) ? "https://einvoice.vn/tra-cuu" : dcTc;
-
-            return new InvoiceLookupSuggestion(
-                ProviderKey,
-                "E-Invoice",
-                url,
-                maTc,
-                string.IsNullOrWhiteSpace(sellerTaxCode) ? null : sellerTaxCode.Trim());
+            return (dcTc, maTc);
         }
         catch
         {
-            return null;
+            return (null, null);
         }
     }
-}
 
+    private static string? GetStr(JsonElement el, string propName)
+    {
+        if (el.ValueKind != JsonValueKind.Object || !el.TryGetProperty(propName, out var p)) return null;
+        var s = p.GetString();
+        return string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+    }
+}

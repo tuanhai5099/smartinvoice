@@ -149,6 +149,8 @@ public class InvoiceRepository : IInvoiceRepository, IBackgroundJobRepository
             q = q.Where(i =>
                 (i.KyHieu != null && i.KyHieu.ToLower().Contains(sLower)) ||
                 (i.NbMst != null && i.NbMst.ToLower().Contains(sLower)) ||
+                (i.ProviderTaxCode != null && i.ProviderTaxCode.ToLower().Contains(sLower)) ||
+                (i.TvanTaxCode != null && i.TvanTaxCode.ToLower().Contains(sLower)) ||
                 (i.NguoiBan != null && DiacriticsHelper.RemoveDiacriticsSql(i.NguoiBan).ToLower().Contains(sNorm)) ||
                 (i.NguoiMua != null && DiacriticsHelper.RemoveDiacriticsSql(i.NguoiMua).ToLower().Contains(sNorm)) ||
                 (i.MstMua != null && i.MstMua.ToLower().Contains(sLower)) ||
@@ -188,6 +190,18 @@ public class InvoiceRepository : IInvoiceRepository, IBackgroundJobRepository
             var ex = filter.FilterLoaiTruBenBan.Trim();
             var exNorm = DiacriticsHelper.RemoveDiacritics(ex).ToLowerInvariant();
             q = q.Where(i => i.NguoiBan == null || !DiacriticsHelper.RemoveDiacriticsSql(i.NguoiBan).ToLower().Contains(exNorm));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.FilterProviderTaxCode))
+        {
+            var p = filter.FilterProviderTaxCode.Trim();
+            q = q.Where(i => i.ProviderTaxCode == p);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.FilterTvanTaxCode))
+        {
+            var t = filter.FilterTvanTaxCode.Trim();
+            q = q.Where(i => i.TvanTaxCode == t);
         }
 
         return q;
@@ -293,12 +307,79 @@ public class InvoiceRepository : IInvoiceRepository, IBackgroundJobRepository
             .ConfigureAwait(false);
     }
 
+    public async Task<BackgroundJob?> TryClaimNextRunnableJobAsync(int maxConcurrentGlobal, CancellationToken cancellationToken = default)
+    {
+        if (maxConcurrentGlobal < 1)
+            return null;
+
+        await using var tx = await _db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var runningCount = await _db.BackgroundJobs
+                .AsNoTracking()
+                .CountAsync(j => j.Status == BackgroundJobStatus.Running, cancellationToken)
+                .ConfigureAwait(false);
+            if (runningCount >= maxConcurrentGlobal)
+            {
+                await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+
+            var busyCompanyIds = await _db.BackgroundJobs
+                .AsNoTracking()
+                .Where(j => j.Status == BackgroundJobStatus.Running)
+                .Select(j => j.CompanyId)
+                .Distinct()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            var next = await _db.BackgroundJobs
+                .Where(j => j.Status == BackgroundJobStatus.Pending && !busyCompanyIds.Contains(j.CompanyId))
+                .OrderBy(j => j.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (next == null)
+            {
+                await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+
+            next.Status = BackgroundJobStatus.Running;
+            next.StartedAt = DateTime.Now;
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return next;
+        }
+        catch
+        {
+            await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     public async Task<IReadOnlyList<BackgroundJob>> GetRecentAsync(int maxCount, CancellationToken cancellationToken = default)
     {
         return await _db.BackgroundJobs.AsNoTracking()
             .OrderByDescending(j => j.CreatedAt)
             .Take(maxCount)
             .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<BackgroundJob?> FindActiveScoRecoveryJobAsync(Guid companyId, DateTime fromDate, DateTime toDate, bool isSold, CancellationToken cancellationToken = default)
+    {
+        var from = fromDate.Date;
+        var to = toDate.Date;
+        return await _db.BackgroundJobs.AsNoTracking()
+            .Where(j => j.Type == BackgroundJobType.ScoRecovery
+                        && j.CompanyId == companyId
+                        && j.IsSold == isSold
+                        && j.FromDate == from
+                        && j.ToDate == to
+                        && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running))
+            .OrderBy(j => j.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 

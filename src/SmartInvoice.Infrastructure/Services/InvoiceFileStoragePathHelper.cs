@@ -35,6 +35,23 @@ public static class InvoiceFileStoragePathHelper
         return Path.Combine(companyRoot, "XML");
     }
 
+    /// <summary>Thư mục gốc PDF theo công ty: Documents\SmartInvoice\{mã công ty}\Pdf (giống UI danh sách hóa đơn).</summary>
+    public static string GetCompanyPdfRootPath(string? companyCodeOrNameOrId) =>
+        Path.Combine(GetCompanyRootPath(companyCodeOrNameOrId), "Pdf");
+
+    /// <summary>Đường dẫn file PDF một hóa đơn (tháng_năm + tên KyHieu-SoHoaDon.pdf), đồng bộ với <c>InvoiceListViewModel.GetPdfPathForInvoice</c>.</summary>
+    public static string GetInvoicePdfPath(string? companyCodeOrNameOrId, string? kyHieu, int soHoaDon, DateTime? ngayLap)
+    {
+        var pdfRoot = GetCompanyPdfRootPath(companyCodeOrNameOrId);
+        var monthPath = GetMonthYearPath(pdfRoot, ngayLap);
+        var kh = kyHieu ?? "";
+        foreach (var c in Path.GetInvalidFileNameChars())
+            kh = kh.Replace(c, '_');
+        var baseKey = $"{kh}-{soHoaDon}";
+        var fileName = SanitizeFileName(string.IsNullOrWhiteSpace(baseKey) ? "Invoice.pdf" : baseKey + ".pdf");
+        return Path.Combine(monthPath, fileName);
+    }
+
     /// <summary>Tên thư mục tháng_năm theo ngày hóa đơn (vd. 2025_02). Nếu không có ngày thì dùng tháng hiện tại.</summary>
     public static string GetMonthYearFolderName(DateTime? invoiceDate)
     {

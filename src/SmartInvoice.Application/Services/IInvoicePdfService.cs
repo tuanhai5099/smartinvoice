@@ -27,30 +27,12 @@ public interface IInvoicePdfService
     Task<InvoiceLookupSuggestion?> GetLookupSuggestionAsync(Guid companyId, string externalId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Thông tin gợi ý tra cứu hóa đơn cho một nhà cung cấp dịch vụ.</summary>
+/// <summary>Thông tin gợi ý tra cứu hóa đơn cho một nhà cung cấp dịch vụ (descriptor bất biến).</summary>
 public sealed record InvoiceLookupSuggestion(
     string ProviderKey,
     string? ProviderName,
     string? SearchUrl,
     string? SecretCode,
-    string? SellerTaxCode);
-
-/// <summary>Chiến lược trích xuất thông tin gợi ý tra cứu (link, mã tra cứu, MST bán) từ payload theo từng nhà cung cấp.</summary>
-public interface IInvoiceLookupProvider
-{
-    /// <summary>Mã nhà cung cấp dịch vụ hóa đơn (tvandnkntt / msttcgp).</summary>
-    string ProviderKey { get; }
-
-    /// <summary>
-    /// Lấy gợi ý tra cứu từ payload JSON của hóa đơn.
-    /// Không được gọi sang fetcher PDF; chỉ parse dữ liệu có sẵn.
-    /// </summary>
-    InvoiceLookupSuggestion? GetSuggestion(string payloadJson, string? sellerTaxCode);
-}
-
-/// <summary>Registry chọn IInvoiceLookupProvider theo key nhà cung cấp (tvandnkntt).</summary>
-public interface IInvoiceLookupProviderRegistry
-{
-    /// <summary>Lấy provider tương ứng với mã nhà cung cấp; null nếu chưa có.</summary>
-    IInvoiceLookupProvider? GetProvider(string? providerKey);
-}
+    string? SellerTaxCode,
+    /// <summary>MST nhà cung cấp dịch vụ hóa đơn (msttcgp) từ payload.</summary>
+    string? ProviderTaxCode = null);

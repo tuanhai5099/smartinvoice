@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
 using SmartInvoice.Application.Services;
+using SmartInvoice.Application.Services.InvoicePayloadParsing;
 
 namespace SmartInvoice.InvoicePdfFetchers;
 
@@ -14,10 +15,15 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// - Sau khi bảng hiện ra, tìm link "Tải file hóa đơn" (a.go-link.btn-info) và click ngay trong Chromium.
 /// - Dùng cơ chế download của Chromium để lấy file (zip/PDF) và trích xuất PDF.
 /// </summary>
+[InvoiceProvider("0104918404", InvoiceProviderMatchKind.SellerTaxCode, InvoiceLookupRegistryKey = "0312303803", MayRequireUserIntervention = true)]
+[InvoiceProvider("0312303803", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
 public sealed class WinInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
-    /// <summary>Mã số thuế nhà cung cấp dịch vụ hóa đơn (WinInvoice).</summary>
-    public string ProviderKey => "0312303803";
+    /// <summary>
+    /// Key logic cho Registry/Resolver. Ở đây map theo MST người bán 0104918404 (WinCommerce/WinMart),
+    /// nên ProviderKey không nhất thiết là MST NCC thật mà là logical key cho fetcher.
+    /// </summary>
+    public string ProviderKey => "0104918404";
 
     private const string SearchUrl = "https://tracuu.wininvoice.vn/";
     private const int PageLoadTimeoutMs = 45000;

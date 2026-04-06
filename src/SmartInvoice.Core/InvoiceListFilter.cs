@@ -18,6 +18,8 @@ public record InvoiceListFilter(
     string? FilterTenNguoiBan,
     string? FilterMstLoaiTru,
     string? FilterLoaiTruBenBan,
+    string? FilterProviderTaxCode,
+    string? FilterTvanTaxCode,
     string? SortBy = null,
     bool SortDescending = true
 );

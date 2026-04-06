@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
 using SmartInvoice.Application.Services;
+using SmartInvoice.Application.Services.InvoicePayloadParsing;
 
 namespace SmartInvoice.InvoicePdfFetchers;
 
@@ -15,6 +16,7 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// - Điền mã tra cứu vào ô txtMaTraCuu, thực thi hàm TimHoaDon() trong JavaScript context.
 /// - Đợi nút Tải FILE PDF (#btnTaiFilePDF), click để tải file, đọc PDF (hoặc zip chứa PDF) và trả về bytes.
 /// </summary>
+[InvoiceProvider("0315638251", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
 public sealed class HtInvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
     /// <summary>Mã số thuế nhà cung cấp dịch vụ hóa đơn (HTInvoice).</summary>
@@ -35,7 +37,7 @@ public sealed class HtInvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
     {
-        var (searchUrl, maTraCuu) = GetSearchUrlAndCodeFromPayload(payloadJson);
+        var (searchUrl, maTraCuu) = HtInvoiceTraCuuParsing.GetSearchUrlAndCodeFromPayload(payloadJson);
         if (string.IsNullOrWhiteSpace(maTraCuu))
         {
             _logger.LogWarning("HTInvoice PDF: payload không có Mã TC trong cttkhac.");
@@ -225,46 +227,6 @@ public sealed class HtInvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             {
                 // best effort cleanup
             }
-        }
-    }
-
-    /// <summary>Lấy DC TC (URL tra cứu) và Mã TC (mã tra cứu) từ cttkhac.</summary>
-    private static (string? SearchUrl, string? MaTraCuu) GetSearchUrlAndCodeFromPayload(string payloadJson)
-    {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            var root = doc.RootElement;
-            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-            if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array)
-                return (null, null);
-
-            string? dcTc = null;
-            string? maTc = null;
-
-            foreach (var item in arr.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.Object) continue;
-                var ttruong = item.TryGetProperty("ttruong", out var tt) ? tt.GetString() : null;
-                if (string.IsNullOrWhiteSpace(ttruong)) continue;
-
-                var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                    : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
-
-                if (string.Equals(ttruong.Trim(), "DC TC", StringComparison.OrdinalIgnoreCase))
-                    dcTc = value;
-                else if (string.Equals(ttruong.Trim(), "Mã TC", StringComparison.OrdinalIgnoreCase)
-                         || string.Equals(ttruong.Trim(), "Ma TC", StringComparison.OrdinalIgnoreCase))
-                    maTc = value;
-            }
-
-            return (dcTc, maTc);
-        }
-        catch
-        {
-            return (null, null);
         }
     }
 

@@ -1,6 +1,8 @@
 using System.Collections.Generic;
+using System.Reflection;
 using Microsoft.Extensions.Logging;
 using SmartInvoice.Application.Services;
+using SmartInvoice.InvoicePdfFetchers;
 
 namespace SmartInvoice.Infrastructure.Services.Pdf;
 
@@ -30,6 +32,17 @@ public sealed class InvoicePdfFetcherRegistry : IInvoicePdfFetcherRegistry
                 var normalized = NormalizeKey(k.ProviderKey);
                 if (string.IsNullOrEmpty(normalized)) continue;
                 map[normalized] = k;
+
+                // Also map keys declared via [InvoiceProvider] attributes so resolver/provider tax-code
+                // aliases (e.g. msttcgp) can route to the same keyed fetcher instance.
+                var providerAttrs = k.GetType().GetCustomAttributes<InvoiceProviderAttribute>(inherit: false);
+                foreach (var attr in providerAttrs)
+                {
+                    if (string.IsNullOrWhiteSpace(attr.Key)) continue;
+                    var alias = NormalizeKey(attr.Key);
+                    if (string.IsNullOrEmpty(alias)) continue;
+                    map[alias] = k;
+                }
             }
         }
         _map = map;

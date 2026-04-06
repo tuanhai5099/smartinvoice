@@ -7,6 +7,7 @@
              xmlns:conv="clr-namespace:SmartInvoice.Modules.Companies.Converters"
              xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
              xmlns:componentModel="clr-namespace:System.ComponentModel;assembly=System"
+             xmlns:vm="clr-namespace:SmartInvoice.Modules.Companies.ViewModels"
              mc:Ignorable="d"
              d:DesignWidth="1180"
              d:DesignHeight="700">
@@ -15,6 +16,7 @@
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <conv:DatePickerDisplayConverter x:Key="DatePickerDisplayConverter" />
         <conv:EmptyStringToVisibilityConverter x:Key="EmptyToVisible" />
+        <conv:StringToVisibilityConverter x:Key="NonEmptyStrToVis" />
         <conv:FilterDirectionToAppearanceConverter x:Key="FilterDirectionToAppearanceConverter" />
         <conv:FilterTrangThaiToIndexConverter x:Key="FilterTrangThaiToIndexConverter" />
         <conv:PdfStateIconConverter x:Key="PdfStateIconConverter" />
@@ -140,7 +142,7 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <ui:Button Content="← Quay Lại"
+                    <ui:Button Content="↞ Quay Lại"
                                Appearance="Secondary"
                                Padding="10,4"
                                FontSize="12"
@@ -1028,6 +1030,19 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center"
                             Margin="16,0,0,0">
+                    <TextBlock Text="Tổng HĐ: "
+                               FontSize="12"
+                               Foreground="{DynamicResource SiTextMuted}"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding TotalCount, Mode=OneWay}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource SiTextSecondary}"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="  ·  "
+                               FontSize="12"
+                               Foreground="{DynamicResource SiTextMuted}"
+                               VerticalAlignment="Center" />
                     <TextBlock Text="XML: " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding CountCoXml, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextSecondary}" VerticalAlignment="Center" />
                     <TextBlock Text=" có, " FontSize="12" Foreground="{DynamicResource SiTextMuted}" VerticalAlignment="Center" />
@@ -1110,15 +1125,17 @@
                AllowsTransparency="True"
                Placement="Center"
                PlacementTarget="{Binding ElementName=RootGrid}"
+               PopupAnimation="None"
                IsOpen="{Binding IsDownloadXmlPopupOpen, Mode=TwoWay}">
             <Border Background="{DynamicResource SiPageBg}"
                     BorderBrush="{DynamicResource SiHeaderBorder}"
                     BorderThickness="1"
-                    CornerRadius="8"
-                    Padding="20"
-                    MinWidth="520"
-                    MaxWidth="620"
-                    MaxHeight="520">
+                    CornerRadius="10"
+                    Padding="28,24"
+                    MinWidth="780"
+                    MaxWidth="960"
+                    MinHeight="420"
+                    MaxHeight="780">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -1128,86 +1145,70 @@
                     </Grid.RowDefinitions>
 
                     <!-- Tiêu đề -->
-                    <TextBlock Grid.Row="0" Margin="0,0,0,6" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource SiTextPrimary}">
+                    <TextBlock Grid.Row="0" Margin="0,0,0,10" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource SiTextPrimary}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
-                                <Setter Property="Text" Value="Tải file hóa đơn" />
+                                <Setter Property="Text" Value="Tải XML hàng loạt (job nền)" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
-                                        <Setter Property="Text" Value="Tải PDF hàng loạt" />
+                                        <Setter Property="Text" Value="Tải PDF hàng loạt (job nền)" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <!-- Khi tải PDF: mô tả chức năng + tổng số + progress + HĐ đang tải + tổng kết -->
-                    <StackPanel Grid.Row="1" Margin="0,0,0,10" Visibility="Collapsed">
-                        <StackPanel.Style>
-                            <Style TargetType="StackPanel">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </StackPanel.Style>
-                        <TextBlock FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,6" TextWrapping="Wrap">
-                            <Run Text="Tải file PDF cho các hóa đơn trong danh sách chưa có PDF (theo từng nhà cung cấp)." />
+                    <!-- Bước + tiến trình (XML và PDF) -->
+                    <StackPanel Grid.Row="1" Margin="0,0,0,14">
+                        <TextBlock FontSize="14" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,6" TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="Bước: chuẩn bị danh sách" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BulkDownloadStep}" Value="{x:Static vm:BulkDownloadStepKind.Downloading}">
+                                            <Setter Property="Text" Value="Bước: đang tải từng hóa đơn (đồng bộ với Quản lý chạy tự động)" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding BulkDownloadStep}" Value="{x:Static vm:BulkDownloadStepKind.Completed}">
+                                            <Setter Property="Text" Value="Bước: hoàn thành" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
                         </TextBlock>
-                        <!-- Tổng số + dòng tóm tắt theo thời gian thực -->
-                        <TextBlock FontSize="13" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,4">
+                        <TextBlock FontSize="15" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,6">
                             <Run Text="Tổng: " />
                             <Run Text="{Binding DownloadTotal, Mode=OneWay}" FontWeight="SemiBold" />
-                            <Run Text=" hóa đơn cần tải PDF." />
+                            <Run Text=" chứng từ trong danh sách tải." />
                         </TextBlock>
-                        <!-- Dòng summarize: đã xử lý / thành công / thất bại / bỏ qua -->
-                        <TextBlock FontSize="12" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,4">
+                        <TextBlock FontSize="14" Foreground="{DynamicResource SiTextSecondary}" Margin="0,0,0,6">
                             <Run Text="Đã xử lý: " />
                             <Run Text="{Binding DownloadCurrentIndex, Mode=OneWay}" FontWeight="SemiBold" />
                             <Run Text="/" />
                             <Run Text="{Binding DownloadTotal, Mode=OneWay}" FontWeight="SemiBold" />
-                            <Run Text=" hóa đơn. " />
-                            <Run Text="Thành công: " />
+                            <Run Text=" — Thành công: " />
                             <Run Text="{Binding DownloadSucceeded, Mode=OneWay}" Foreground="#43A047" FontWeight="SemiBold" />
                             <Run Text=" | Thất bại: " />
                             <Run Text="{Binding DownloadFailed, Mode=OneWay}" Foreground="#E53935" FontWeight="SemiBold" />
+                            <Run Text=" | Không XML: " />
+                            <Run Text="{Binding DownloadNoXml, Mode=OneWay}" Foreground="#757575" FontWeight="SemiBold" />
                             <Run Text=" | Bỏ qua: " />
                             <Run Text="{Binding DownloadSkipped, Mode=OneWay}" Foreground="#757575" FontWeight="SemiBold" />
                         </TextBlock>
                         <ProgressBar Minimum="0"
                                     Maximum="{Binding DownloadTotal, Mode=OneWay}"
                                     Value="{Binding DownloadCurrentIndex, Mode=OneWay}"
-                                    Height="14"
-                                    Margin="0,0,0,6"
+                                    Height="18"
+                                    Margin="0,0,0,8"
                                     Foreground="{DynamicResource SiAccent}" />
-                        <!-- Hóa đơn đang được tải -->
                         <TextBlock Text="{Binding DownloadXmlProgressText, Mode=OneWay}"
-                                   FontSize="13"
+                                   FontSize="15"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource SiTextPrimary}"
                                    TextWrapping="Wrap"
-                                   Margin="0,2,0,6" />
-                        <!-- Tổng kết (Thành công / Thất bại / Bỏ qua): luôn hiện khi tải PDF, hoặc khi tải XML đã xong -->
-                        <Border Margin="0,6,0,0" Padding="10,8" CornerRadius="6" Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1" Visibility="Collapsed">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Visibility" Value="Collapsed" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                        </DataTrigger>
-                                        <MultiDataTrigger>
-                                            <MultiDataTrigger.Conditions>
-                                                <Condition Binding="{Binding IsDownloadPdfResults}" Value="False" />
-                                                <Condition Binding="{Binding IsDownloadingXml}" Value="False" />
-                                            </MultiDataTrigger.Conditions>
-                                            <Setter Property="Visibility" Value="Visible" />
-                                        </MultiDataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
+                                   Margin="0,4,0,6" />
+                        <TextBlock FontSize="13" Foreground="{DynamicResource SiTextSecondary}" TextWrapping="Wrap"
+                                   Text="Có thể đóng cửa sổ này; job vẫn chạy nền. Xem tiến trình tại Quản lý chạy tự động." />
+                        <Border Margin="0,10,0,0" Padding="16,12" CornerRadius="8" Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -1215,48 +1216,74 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0" HorizontalAlignment="Center">
-                                    <TextBlock Text="Thành công" FontSize="11" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" />
-                                    <TextBlock Text="{Binding DownloadSucceeded}" FontSize="22" FontWeight="Bold" Foreground="#43A047" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Thành công" FontSize="13" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding DownloadSucceeded}" FontSize="28" FontWeight="Bold" Foreground="#43A047" HorizontalAlignment="Center" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" HorizontalAlignment="Center">
-                                    <TextBlock Text="Thất bại" FontSize="11" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" />
-                                    <TextBlock Text="{Binding DownloadFailed}" FontSize="22" FontWeight="Bold" Foreground="#E53935" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Thất bại" FontSize="13" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding DownloadFailed}" FontSize="28" FontWeight="Bold" Foreground="#E53935" HorizontalAlignment="Center" />
                                 </StackPanel>
-                                <StackPanel Grid.Column="2" HorizontalAlignment="Center">
-                                    <TextBlock Text="Bỏ qua (chưa cấu hình)" FontSize="11" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" TextAlignment="Center" />
-                                    <TextBlock Text="{Binding DownloadSkipped}" FontSize="22" FontWeight="Bold" Foreground="#757575" HorizontalAlignment="Center" />
-                                </StackPanel>
+                                <Grid Grid.Column="2" HorizontalAlignment="Center">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="Không có XML" FontSize="13" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" />
+                                        <TextBlock Text="{Binding DownloadNoXml}" FontSize="28" FontWeight="Bold" Foreground="#757575" HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="Bỏ qua (PDF)" FontSize="13" Foreground="{DynamicResource SiTextSecondary}" HorizontalAlignment="Center" TextAlignment="Center" />
+                                        <TextBlock Text="{Binding DownloadSkipped}" FontSize="28" FontWeight="Bold" Foreground="#757575" HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                </Grid>
                             </Grid>
                         </Border>
                     </StackPanel>
 
-                    <!-- Trạng thái chung khi tải XML (không phải PDF) -->
-                    <TextBlock Grid.Row="1" Text="{Binding DownloadXmlProgressText}" FontSize="13" Foreground="{DynamicResource SiTextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="False">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-
-                    <!-- Danh sách chi tiết: từng hóa đơn với icon ✓/⊘/✗ -->
-                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" MaxHeight="300">
+                    <!-- Danh sách chi tiết -->
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" MinHeight="220" MaxHeight="520">
                         <ItemsControl ItemsSource="{Binding DownloadResults}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Margin="0,0,0,6" Padding="10,6" Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1" CornerRadius="4">
+                                    <Border Margin="0,0,0,8" Padding="14,10" Background="{DynamicResource SiCardBg}" BorderBrush="{DynamicResource SiCardBorder}" BorderThickness="1" CornerRadius="6">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsInProgress}" Value="True">
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource SiAccent}" />
+                                                        <Setter Property="BorderThickness" Value="2" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding NeedsManualLookup}" Value="True">
+                                                        <Setter Property="BorderBrush" Value="#FF9800" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
                                         <Grid>
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="32" />
-                                                <ColumnDefinition Width="140" />
+                                                <ColumnDefinition Width="36" />
+                                                <ColumnDefinition Width="160" />
                                                 <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding StatusIcon}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center">
+                                            <TextBlock Grid.Column="0" Text="{Binding StatusIcon}" FontSize="16" FontWeight="Bold" VerticalAlignment="Center">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Foreground" Value="#E53935" />
@@ -1270,19 +1297,42 @@
                                                             <DataTrigger Binding="{Binding NoXml}" Value="True">
                                                                 <Setter Property="Foreground" Value="#757575" />
                                                             </DataTrigger>
+                                                            <DataTrigger Binding="{Binding NeedsManualLookup}" Value="True">
+                                                                <Setter Property="Foreground" Value="#FF9800" />
+                                                            </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
-                                            <TextBlock Grid.Column="1" Text="{Binding SoHoaDonDisplay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="{Binding SoHoaDonDisplay}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource SiTextPrimary}" VerticalAlignment="Center" />
                                             <TextBlock Grid.Column="2"
                                                        Text="{Binding Message}"
-                                                       FontSize="12"
+                                                       FontSize="14"
                                                        Foreground="{DynamicResource SiTextSecondary}"
                                                        VerticalAlignment="Center"
-                                                       TextWrapping="NoWrap"
-                                                       TextTrimming="CharacterEllipsis"
+                                                       TextWrapping="Wrap"
+                                                       MaxWidth="560"
                                                        ToolTip="{Binding Message}" />
+                                            <ui:Button Grid.Column="3"
+                                                       Content="Tra cứu"
+                                                       Appearance="Secondary"
+                                                       Padding="12,6"
+                                                       FontSize="13"
+                                                       Margin="8,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       Command="{Binding DataContext.OpenBulkRowLookupCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                       CommandParameter="{Binding}">
+                                                <ui:Button.Style>
+                                                    <Style TargetType="ui:Button">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding NeedsManualLookup}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ui:Button.Style>
+                                            </ui:Button>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -1290,24 +1340,47 @@
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-                        <ui:Button Content="Tải lại các hóa đơn thất bại"
-                                   Command="{Binding RetryFailedPdfCommand}"
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                        <ui:Button Content="Tải lại XML thất bại"
+                                   Command="{Binding RetryFailedXmlCommand}"
                                    Appearance="Secondary"
-                                   Padding="12,6"
-                                   FontSize="12"
+                                   Padding="16,8"
+                                   FontSize="14"
                                    Margin="0,0,8,0"
                                    Visibility="Collapsed">
                             <ui:Button.Style>
                                 <Style TargetType="ui:Button">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsDownloadPdfResults}" Value="True">
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsDownloadPdfResults}" Value="False" />
+                                                <Condition Binding="{Binding HasFailedXmlInLastBatch}" Value="True" />
+                                            </MultiDataTrigger.Conditions>
                                             <Setter Property="Visibility" Value="Visible" />
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding HasFailedPdfInLastBatch}" Value="False">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                        </DataTrigger>
+                                        </MultiDataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ui:Button.Style>
+                        </ui:Button>
+                        <ui:Button Content="Tải lại PDF thất bại"
+                                   Command="{Binding RetryFailedPdfCommand}"
+                                   Appearance="Secondary"
+                                   Padding="16,8"
+                                   FontSize="14"
+                                   Margin="0,0,8,0"
+                                   Visibility="Collapsed">
+                            <ui:Button.Style>
+                                <Style TargetType="ui:Button">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsDownloadPdfResults}" Value="True" />
+                                                <Condition Binding="{Binding HasFailedPdfInLastBatch}" Value="True" />
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </MultiDataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </ui:Button.Style>
@@ -1315,15 +1388,19 @@
                         <ui:Button Content="Đóng"
                                    Command="{Binding CloseDownloadXmlPopupCommand}"
                                    Appearance="Secondary"
-                                   Padding="12,6"
-                                   FontSize="12" />
+                                   Padding="16,8"
+                                   FontSize="14" />
                     </StackPanel>
                 </Grid>
             </Border>
         </Popup>
 
-        <!-- Overlay modal: chặn thao tác bên dưới khi popup tải XML/PDF đang mở -->
-        <Border Grid.RowSpan="10"
+        <!-- Overlay modal: chỉ phủ đúng 6 hàng của RootGrid (không RowSpan thừa → tránh Grid tạo hàng ẩn làm lệch layout) -->
+        <Border Grid.Row="0"
+                Grid.RowSpan="6"
+                Panel.ZIndex="8000"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
                 Background="#40000000"
                 Visibility="Collapsed"
                 IsHitTestVisible="False">
@@ -1389,6 +1466,18 @@
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource SiTextPrimary}" />
                         <TextBox Text="{Binding LookupSellerTaxCode, TargetNullValue='(Chưa có)'}"
+                                 IsReadOnly="True"
+                                 Margin="0,2,0,0"
+                                 FontSize="12" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,0,10"
+                                Visibility="{Binding LookupProviderTaxCode, Converter={StaticResource NonEmptyStrToVis}}">
+                        <TextBlock Text="MST nhà cung cấp dịch vụ (msttcgp)"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource SiTextPrimary}" />
+                        <TextBox Text="{Binding LookupProviderTaxCode}"
                                  IsReadOnly="True"
                                  Margin="0,2,0,0"
                                  FontSize="12" />
@@ -1565,6 +1654,47 @@
                 </StackPanel>
             </Border>
         </Popup>
+
+        <!-- Sync modal: phủ toàn bộ vùng danh sách (6 hàng), không gói trong hàng header -->
+        <Border Grid.Row="0"
+                Grid.RowSpan="6"
+                Panel.ZIndex="9000"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
+                Background="#80000000"
+                Visibility="{Binding IsSyncInProgress, Converter={StaticResource BoolToVis}}">
+            <Grid>
+                <Border Background="{DynamicResource SiCardBg}"
+                        CornerRadius="12"
+                        Padding="24"
+                        BorderBrush="{DynamicResource SiHeaderBorder}"
+                        BorderThickness="1"
+                        Width="360"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                    <StackPanel HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <ui:ProgressRing Width="44"
+                                         Height="44"
+                                         IsIndeterminate="True"
+                                         Foreground="{DynamicResource SiAccent}" />
+                        <TextBlock Text="&#272;ang &#273;&#7891;ng b&#7897; h&#243;a &#273;&#417;n"
+                                   Margin="0,12,0,0"
+                                   FontSize="16"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource SiTextPrimary}" />
+                        <TextBlock Text="Vui l&#242;ng ch&#7901; &#273;&#7871;n khi ho&#224;n t&#7845;t. C&#225;c ch&#7913;c n&#259;ng kh&#225;c t&#7841;m th&#7901;i b&#7883; kh&#243;a."
+                                   Margin="0,6,0,0"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   Foreground="{DynamicResource SiTextSecondary}"
+                                   MaxWidth="300" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
     </Grid>
 </UserControl>
 

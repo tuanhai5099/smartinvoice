@@ -209,14 +209,21 @@ public class HoaDonDienTuApiClient : IHoaDonDienTuApiClient
         return url;
     }
 
-    private async Task<InvoiceListApiResponse?> GetInvoicesListAsync(string accessToken, string url, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendAuthenticatedGetAsync(string accessToken, string url, CancellationToken cancellationToken)
     {
-        using var response = await ApiRetryHelper.SendWithRetryAsync(async () =>
+        if (ScoQueryResilience.IsScoQueryUrl(url))
+            return await ScoQueryResilience.SendAuthorizedGetAsync(_httpClient, accessToken, url, cancellationToken).ConfigureAwait(false);
+        return await ApiRetryHelper.SendWithRetryAsync(async () =>
         {
             var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             return await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<InvoiceListApiResponse?> GetInvoicesListAsync(string accessToken, string url, CancellationToken cancellationToken)
+    {
+        using var response = await SendAuthenticatedGetAsync(accessToken, url, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
@@ -287,12 +294,7 @@ public class HoaDonDienTuApiClient : IHoaDonDienTuApiClient
     {
         var baseUrl = fromSco ? InvoiceDetailScoUrl : InvoiceDetailUrl;
         var url = $"{baseUrl}?nbmst={Uri.EscapeDataString(nbmst)}&khhdon={Uri.EscapeDataString(khhdon)}&shdon={shdon}&khmshdon={khmshdon}";
-        using var response = await ApiRetryHelper.SendWithRetryAsync(async () =>
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            return await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        using var response = await SendAuthenticatedGetAsync(accessToken, url, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -301,12 +303,7 @@ public class HoaDonDienTuApiClient : IHoaDonDienTuApiClient
     {
         var baseUrl = fromSco ? InvoiceRelativeScoUrl : InvoiceRelativeUrl;
         var url = $"{baseUrl}?nbmst={Uri.EscapeDataString(nbmst)}&khmshdon={khmshdon}&khhdon={Uri.EscapeDataString(khhdon)}&shdon={shdon}";
-        using var response = await ApiRetryHelper.SendWithRetryAsync(async () =>
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            return await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        using var response = await SendAuthenticatedGetAsync(accessToken, url, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -316,12 +313,7 @@ public class HoaDonDienTuApiClient : IHoaDonDienTuApiClient
     {
         var baseUrl = fromSco ? InvoiceScoExportXmlUrl : InvoiceExportXmlUrl;
         var url = $"{baseUrl}?nbmst={Uri.EscapeDataString(nbmst)}&khhdon={Uri.EscapeDataString(khhdon)}&shdon={shdon}&khmshdon={khmshdon}";
-        using var response = await ApiRetryHelper.SendWithRetryAsync(async () =>
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            return await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        using var response = await SendAuthenticatedGetAsync(accessToken, url, cancellationToken).ConfigureAwait(false);
 
         if (response.StatusCode == HttpStatusCode.InternalServerError)
         {

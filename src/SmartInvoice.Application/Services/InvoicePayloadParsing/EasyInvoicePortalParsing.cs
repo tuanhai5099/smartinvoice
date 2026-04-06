@@ -1,17 +1,13 @@
 using System.Text.Json;
-using SmartInvoice.Application.Services;
 
-namespace SmartInvoice.Infrastructure.Services.Pdf;
+namespace SmartInvoice.Application.Services.InvoicePayloadParsing;
 
-/// <summary>Gợi ý tra cứu cho EasyInvoice (0105987432): PortalLink + Fkey trong cttkhac.</summary>
-public sealed class EasyInvoiceLookupProvider : IInvoiceLookupProvider
+/// <summary>Đọc PortalLink / Fkey từ payload EasyInvoice (cttkhac, fallback ttkhac).</summary>
+public static class EasyInvoicePortalParsing
 {
-    public string ProviderKey => "0105987432";
-
-    public InvoiceLookupSuggestion? GetSuggestion(string payloadJson, string? sellerTaxCode)
+    public static (string? PortalLink, string? Fkey) GetPortalLinkAndFkeyFromPayload(string payloadJson)
     {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
-
+        if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
         try
         {
             using var doc = JsonDocument.Parse(payloadJson);
@@ -21,7 +17,6 @@ public sealed class EasyInvoiceLookupProvider : IInvoiceLookupProvider
             string? portalLink = null;
             string? fkey = null;
 
-            // 1) Ưu tiên đọc từ cttkhac (PortalLink / Fkey)
             if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in arr.EnumerateArray())
@@ -31,9 +26,10 @@ public sealed class EasyInvoiceLookupProvider : IInvoiceLookupProvider
                     var ttStr = tt.GetString();
                     if (string.IsNullOrWhiteSpace(ttStr)) continue;
 
-                    var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                        : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                    var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+                    var dlieu = item.TryGetProperty("dlieu", out var dl) ? dl.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(dlieu) && item.TryGetProperty("dLieu", out var dL))
+                        dlieu = dL.GetString();
+                    var value = string.IsNullOrWhiteSpace(dlieu) ? null : dlieu.Trim();
 
                     if (string.Equals(ttStr, "PortalLink", StringComparison.OrdinalIgnoreCase))
                         portalLink = value;
@@ -44,14 +40,12 @@ public sealed class EasyInvoiceLookupProvider : IInvoiceLookupProvider
                 }
             }
 
-            // 2) Fallback: đọc từ ttkhac (một số cấu hình EasyInvoice đẩy PortalLink/Fkey vào đây)
             if ((portalLink == null || fkey == null) && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in ttkhac.EnumerateArray())
                 {
                     if (item.ValueKind != JsonValueKind.Object) continue;
 
-                    // Kiểu 1: giống cttkhac – có ttruong + dlieu/dLieu
                     if (item.TryGetProperty("ttruong", out var tt) && tt.ValueKind == JsonValueKind.String)
                     {
                         var ttStr = tt.GetString();
@@ -68,7 +62,6 @@ public sealed class EasyInvoiceLookupProvider : IInvoiceLookupProvider
                         }
                     }
 
-                    // Kiểu 2: PortalLink/Fkey là property trong ttchung bên trong ttkhac
                     if (item.TryGetProperty("ttchung", out var ttchung) && ttchung.ValueKind == JsonValueKind.Object)
                     {
                         if (portalLink == null && ttchung.TryGetProperty("PortalLink", out var p) && p.ValueKind == JsonValueKind.String)
@@ -87,20 +80,11 @@ public sealed class EasyInvoiceLookupProvider : IInvoiceLookupProvider
                 }
             }
 
-            if (portalLink == null && fkey == null && string.IsNullOrWhiteSpace(sellerTaxCode))
-                return null;
-
-            return new InvoiceLookupSuggestion(
-                ProviderKey,
-                "EasyInvoice",
-                portalLink,
-                fkey,
-                string.IsNullOrWhiteSpace(sellerTaxCode) ? null : sellerTaxCode.Trim());
+            return (portalLink, fkey);
         }
         catch
         {
-            return null;
+            return (null, null);
         }
     }
 }
-

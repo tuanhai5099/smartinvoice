@@ -64,8 +64,11 @@ public sealed class BackgroundJobDialogService : IBackgroundJobDialogService
     {
         System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
         {
+            var app = System.Windows.Application.Current;
             var toast = new Views.ToastPopupWindow(title, message, isError: false);
-            toast.Show();
+            if (app?.MainWindow != null)
+                toast.Owner = app.MainWindow;
+            toast.ShowDialog();
         });
     }
 }

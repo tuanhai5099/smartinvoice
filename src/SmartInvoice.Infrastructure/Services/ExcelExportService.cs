@@ -59,6 +59,8 @@ public sealed class ExcelExportService : IExcelExportService
             null,
             null,
             null,
+            null,
+            null,
             "NgayLap",
             false);
 

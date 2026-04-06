@@ -12,11 +12,13 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
+    <PackageReference Include="Polly" Version="8.5.0" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="Svg.Skia" Version="3.4.1" />
     <ProjectReference Include="..\SmartInvoice.Application\SmartInvoice.Application.csproj" />
     <ProjectReference Include="..\SmartInvoice.Captcha\SmartInvoice.Captcha.csproj" />
     <ProjectReference Include="..\SmartInvoice.Core\SmartInvoice.Core.csproj" />
+    <ProjectReference Include="..\SmartInvoice.InvoicePdfFetchers\SmartInvoice.InvoicePdfFetchers.csproj" />
   </ItemGroup>
 </Project>

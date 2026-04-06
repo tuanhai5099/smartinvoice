@@ -1,6 +1,6 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SmartInvoice.Application.Services;
+using SmartInvoice.Application.Services.InvoicePayloadParsing;
 
 namespace SmartInvoice.InvoicePdfFetchers;
 
@@ -9,6 +9,7 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// Mã bí mật lấy từ cttkhac: item có ttruong = "transaction id" (hoặc "transactionid"), lấy value của dlieu.
 /// URL: https://www.meinvoice.vn/tra-cuu/DownloadHandler.ashx?Type=pdf&Code={transactionId}
 /// </summary>
+[InvoiceProvider("0101243150", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
 public sealed class MeinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
     /// <summary>Mã số thuế nhà cung cấp dịch vụ hóa đơn (MISA meInvoice).</summary>
@@ -27,7 +28,7 @@ public sealed class MeinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
     {
-        var transactionId = GetTransactionIdFromPayload(payloadJson);
+        var transactionId = MeinvoiceTransactionParsing.GetTransactionIdFromPayload(payloadJson);
         if (string.IsNullOrWhiteSpace(transactionId))
         {
             _logger.LogWarning("Meinvoice PDF: payload không có cttkhac với ttruong 'transaction id'.");
@@ -70,35 +71,4 @@ public sealed class MeinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
         }
     }
 
-    /// <summary>Lấy giá trị transaction id từ cttkhac: item có ttruong = "transaction id" (hoặc "transactionid") thì lấy dlieu.</summary>
-    private static string? GetTransactionIdFromPayload(string payloadJson)
-    {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            var root = doc.RootElement;
-            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-            if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array)
-                return null;
-            foreach (var item in arr.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.Object) continue;
-                if (!item.TryGetProperty("ttruong", out var tt) || tt.ValueKind != JsonValueKind.String) continue;
-                var ttStr = tt.GetString();
-                if (string.IsNullOrWhiteSpace(ttStr)) continue;
-                var normalized = ttStr.Trim().Replace(" ", "").Replace("_", "");
-                if (!string.Equals(normalized, "transactionid", StringComparison.OrdinalIgnoreCase)) continue;
-                var dlieu = item.TryGetProperty("dlieu", out var dl) ? dl.GetString() : null;
-                if (string.IsNullOrWhiteSpace(dlieu) && item.TryGetProperty("dLieu", out var dL))
-                    dlieu = dL.GetString();
-                return string.IsNullOrWhiteSpace(dlieu) ? null : dlieu.Trim();
-            }
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }

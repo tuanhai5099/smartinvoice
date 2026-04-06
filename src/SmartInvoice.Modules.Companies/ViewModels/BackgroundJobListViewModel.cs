@@ -36,10 +36,16 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
     [NotifyCanExecuteChangedFor(nameof(DeleteCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenFolderCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedDetailCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedXmlCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedPdfCommand))]
     private BackgroundJobDto? _selectedJob;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RetryCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedDetailCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedXmlCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RetryFailedPdfCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -74,9 +80,11 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
             if (CurrentPage > TotalPages)
                 CurrentPage = TotalPages;
             ApplyPaging();
-            var running = _allJobs.FirstOrDefault(j => j.Status == BackgroundJobStatus.Running);
-            StatusMessage = running != null
-                ? $"Đang chạy: {running.ProgressDisplayText}"
+            var running = _allJobs.Where(j => j.Status == BackgroundJobStatus.Running).ToList();
+            StatusMessage = running.Count > 0
+                ? running.Count == 1
+                    ? $"Đang chạy: {running[0].ProgressDisplayText}"
+                    : $"Đang chạy {running.Count} job song song ({string.Join("; ", running.Take(3).Select(j => j.Description ?? j.Type.ToString()))}{(running.Count > 3 ? "…" : "")})."
                 : TotalCount > 0
                     ? $"Trang {CurrentPage}/{TotalPages}, tổng {TotalCount} job."
                     : "Chưa có job nào.";
@@ -91,9 +99,17 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
     {
         var skip = (CurrentPage - 1) * PageSize;
         var page = _allJobs.Skip(skip).Take(PageSize).ToList();
+        var keepId = SelectedJob?.Id;
         Jobs = new ObservableCollection<BackgroundJobDto>(page);
-        // Tự động focus vào job đầu tiên trên trang (nếu có)
-        if (Jobs.Count > 0)
+        // Giữ selection theo Id sau mỗi lần nạp lại danh sách (timer 3s / Refresh); tránh nhảy về dòng đầu khi user đang xem job khác.
+        if (Jobs.Count == 0)
+            SelectedJob = null;
+        else if (keepId.HasValue)
+        {
+            var same = Jobs.FirstOrDefault(j => j.Id == keepId.Value);
+            SelectedJob = same ?? Jobs[0];
+        }
+        else
             SelectedJob = Jobs[0];
         PrevPageCommand.NotifyCanExecuteChanged();
         NextPageCommand.NotifyCanExecuteChanged();
@@ -158,6 +174,92 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
         && SelectedJob.Status == BackgroundJobStatus.Failed
         && !IsBusy;
 
+    [RelayCommand(CanExecute = nameof(CanRetryFailedDetail))]
+    private async Task RetryFailedDetailAsync()
+    {
+        if (SelectedJob == null) return;
+        IsBusy = true;
+        try
+        {
+            await _jobService.EnqueueRetryFailedInvoicesAsync(SelectedJob.Id, BackgroundJobRetryMode.Detail).ConfigureAwait(true);
+            StatusMessage = "Đã tạo job chạy lại chi tiết cho các hóa đơn lỗi.";
+            await LoadJobsAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Lỗi: " + ex.Message;
+            System.Windows.MessageBox.Show(ex.Message, "Không tạo được job chạy lại chi tiết", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanRetryFailedDetail() => SelectedJob != null
+        && !IsBusy
+        && (SelectedJob.Status == BackgroundJobStatus.Completed || SelectedJob.Status == BackgroundJobStatus.Failed)
+        && (SelectedJob.Type == BackgroundJobType.DownloadInvoices || SelectedJob.Type == BackgroundJobType.RefreshInvoiceDetails)
+        && JobFailureSummary.Parse(SelectedJob.FailureSummaryJson).DetailFailedIds.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanRetryFailedXml))]
+    private async Task RetryFailedXmlAsync()
+    {
+        if (SelectedJob == null) return;
+        IsBusy = true;
+        try
+        {
+            await _jobService.EnqueueRetryFailedInvoicesAsync(SelectedJob.Id, BackgroundJobRetryMode.Xml).ConfigureAwait(true);
+            StatusMessage = "Đã tạo job tải lại XML cho các hóa đơn lỗi.";
+            await LoadJobsAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Lỗi: " + ex.Message;
+            System.Windows.MessageBox.Show(ex.Message, "Không tạo được job tải lại XML", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanRetryFailedXml() => SelectedJob != null
+        && !IsBusy
+        && (SelectedJob.Status == BackgroundJobStatus.Completed || SelectedJob.Status == BackgroundJobStatus.Failed)
+        && JobFailureSummary.Parse(SelectedJob.FailureSummaryJson).XmlFailedIds.Count > 0
+        && (SelectedJob.Type == BackgroundJobType.DownloadXmlBulk
+            || (SelectedJob.Type == BackgroundJobType.DownloadInvoices && SelectedJob.DownloadXml));
+
+    [RelayCommand(CanExecute = nameof(CanRetryFailedPdf))]
+    private async Task RetryFailedPdfAsync()
+    {
+        if (SelectedJob == null) return;
+        IsBusy = true;
+        try
+        {
+            await _jobService.EnqueueRetryFailedInvoicesAsync(SelectedJob.Id, BackgroundJobRetryMode.Pdf).ConfigureAwait(true);
+            StatusMessage = "Đã tạo job tải lại PDF cho các hóa đơn lỗi.";
+            await LoadJobsAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Lỗi: " + ex.Message;
+            System.Windows.MessageBox.Show(ex.Message, "Không tạo được job tải lại PDF", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanRetryFailedPdf() => SelectedJob != null
+        && !IsBusy
+        && (SelectedJob.Status == BackgroundJobStatus.Completed || SelectedJob.Status == BackgroundJobStatus.Failed)
+        && JobFailureSummary.Parse(SelectedJob.FailureSummaryJson).PdfFailedIds.Count > 0
+        && (SelectedJob.Type == BackgroundJobType.DownloadPdfBulk
+            || (SelectedJob.Type == BackgroundJobType.DownloadInvoices && SelectedJob.DownloadPdf));
+
     [RelayCommand(CanExecute = nameof(CanCancel))]
     private async Task CancelAsync()
     {
@@ -166,7 +268,9 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
         try
         {
             await _jobService.CancelAsync(SelectedJob.Id).ConfigureAwait(true);
-            StatusMessage = "Đã hủy job.";
+            StatusMessage = SelectedJob.Status == BackgroundJobStatus.Running
+                ? "Đã gửi tín hiệu hủy; job sẽ chuyển sang Đã hủy khi worker dừng."
+                : "Đã hủy job.";
             await LoadJobsAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
@@ -180,7 +284,7 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
     }
 
     private bool CanCancel() => SelectedJob != null
-        && SelectedJob.Status == BackgroundJobStatus.Pending
+        && (SelectedJob.Status == BackgroundJobStatus.Pending || SelectedJob.Status == BackgroundJobStatus.Running)
         && !IsBusy;
 
     [RelayCommand(CanExecute = nameof(CanDelete))]
@@ -204,9 +308,7 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
         }
     }
 
-    private bool CanDelete() => SelectedJob != null
-        && SelectedJob.Status != BackgroundJobStatus.Running
-        && !IsBusy;
+    private bool CanDelete() => SelectedJob != null && !IsBusy;
 
     [RelayCommand(CanExecute = nameof(CanDeleteAll))]
     private async Task DeleteAllAsync()
@@ -258,6 +360,9 @@ public partial class BackgroundJobListViewModel : ObservableObject, IDisposable
     partial void OnSelectedJobChanged(BackgroundJobDto? value)
     {
         RetryCommand.NotifyCanExecuteChanged();
+        RetryFailedDetailCommand.NotifyCanExecuteChanged();
+        RetryFailedXmlCommand.NotifyCanExecuteChanged();
+        RetryFailedPdfCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
         DeleteCommand.NotifyCanExecuteChanged();
         OpenFolderCommand.NotifyCanExecuteChanged();

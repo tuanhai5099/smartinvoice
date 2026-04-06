@@ -50,6 +50,15 @@ public enum XmlDownloadState
     NoXml
 }
 
+/// <summary>Bước popup tải hàng loạt XML/PDF (job nền).</summary>
+public enum BulkDownloadStepKind
+{
+    None,
+    Preparation,
+    Downloading,
+    Completed
+}
+
 /// <summary>Một dòng kết quả trong popup tải XML.</summary>
 public sealed class DownloadItemResultViewModel : ObservableObject
 {
@@ -59,6 +68,11 @@ public sealed class DownloadItemResultViewModel : ObservableObject
     /// <summary>True khi tải PDF bỏ qua do thiếu cấu hình / link / mã tra cứu.</summary>
     public bool IsSkipped { get; }
     public string? Message { get; }
+    public string? ExternalId { get; }
+    /// <summary>Gợi ý tra cứu tay (fetcher portal/captcha).</summary>
+    public bool NeedsManualLookup { get; }
+    /// <summary>Đang là hóa đơn đang xử lý (highlight).</summary>
+    public bool IsInProgress { get; }
     public string StatusText => Success
         ? "Thành công"
         : (IsSkipped
@@ -72,7 +86,7 @@ public sealed class DownloadItemResultViewModel : ObservableObject
                         : "Thất bại"))));
     /// <summary>
     /// Icon hiển thị:
-    /// • chờ tải, ⏳ đang tải, ✓ thành công, ⊘ bỏ qua / không có XML, ✗ thất bại.
+    /// • chờ tải, ➳ đang tải, ✓ thành công, ➘ bỏ qua / không có XML, ✗ thất bại.
     /// </summary>
     public string StatusIcon
     {
@@ -81,24 +95,35 @@ public sealed class DownloadItemResultViewModel : ObservableObject
             if (!string.IsNullOrEmpty(Message))
             {
                 if (Message.StartsWith("Đang tải", StringComparison.OrdinalIgnoreCase))
-                    return "⏳";
+                    return "➳";
                 if (Message.StartsWith("Chờ", StringComparison.OrdinalIgnoreCase))
                     return "•";
             }
 
             if (Success) return "✓";
-            if (IsSkipped || NoXml) return "⊘";
+            if (IsSkipped || NoXml) return "➘";
             return "✗";
         }
     }
 
-    public DownloadItemResultViewModel(string soHoaDonDisplay, bool success, bool noXml, string? message, bool isSkipped = false)
+    public DownloadItemResultViewModel(
+        string soHoaDonDisplay,
+        bool success,
+        bool noXml,
+        string? message,
+        bool isSkipped = false,
+        string? externalId = null,
+        bool needsManualLookup = false,
+        bool isInProgress = false)
     {
         SoHoaDonDisplay = soHoaDonDisplay;
         Success = success;
         NoXml = noXml;
         IsSkipped = isSkipped;
         Message = message ?? "";
+        ExternalId = externalId;
+        NeedsManualLookup = needsManualLookup;
+        IsInProgress = isInProgress;
     }
 }
 
@@ -112,11 +137,16 @@ public partial class InvoiceListViewModel : ObservableObject
     private readonly IInvoiceDetailViewService _invoiceDetailViewService;
     private readonly IInvoicePdfService _invoicePdfService;
     private readonly IBackgroundJobService _backgroundJobService;
+    private readonly IScoSyncRecoveryPlanner _scoRecoveryPlanner;
     private readonly ILogger<InvoiceListViewModel> _logger;
     private bool _suppressAutoFilter;
 
-    /// <summary>Danh sách hóa đơn thất bại trong lần tải PDF gần nhất (để hỗ trợ nút Tải lại).</summary>
-    private readonly List<InvoiceDisplayDto> _lastPdfFailedInvoices = new();
+    private Guid? _trackedBulkJobId;
+    private bool _bulkDownloadIsPdf;
+    private Guid? _sourceJobIdForRetry;
+    private DispatcherTimer? _bulkJobPollTimer;
+    private readonly List<string> _bulkRowExternalIds = new();
+    private bool _bulkFinalizeDone;
 
     private void OpenViewerOnUiThread(string path, InvoiceDisplayDto inv, Func<Task<(string? printPath, string? error)>>? getPrintPathAsync)
     {
@@ -144,7 +174,7 @@ public partial class InvoiceListViewModel : ObservableObject
     [ObservableProperty]
     private string _companyName = string.Empty;
 
-    /// <summary>Mã công ty / tên gọi nhỏ (dùng cho tên thư mục lưu PDF, ZIP XML).</summary>
+    /// <summary>Mã công ty / tên gợi nhớ (dùng cho tên thư mục lưu PDF, ZIP XML).</summary>
     [ObservableProperty]
     private string _companyCode = string.Empty;
 
@@ -168,6 +198,9 @@ public partial class InvoiceListViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isBusy;
+
+    [ObservableProperty]
+    private bool _isSyncInProgress;
 
     [ObservableProperty]
     private bool _isRowActionBusy;
@@ -319,6 +352,14 @@ public partial class InvoiceListViewModel : ObservableObject
     [ObservableProperty]
     private bool _hasFailedPdfInLastBatch;
 
+    /// <summary>True nếu lần tải XML hàng loạt có lỗi (có ExternalId trong FailureSummary).</summary>
+    [ObservableProperty]
+    private bool _hasFailedXmlInLastBatch;
+
+    /// <summary>Bước hiển thị trong popup tải hàng loạt.</summary>
+    [ObservableProperty]
+    private BulkDownloadStepKind _bulkDownloadStep;
+
     /// <summary>Chỉ hiển thị hóa đơn ngoại tệ (Dvtte != VND) trên lưới.</summary>
     [ObservableProperty]
     private bool _filterForeignCurrencyOnly;
@@ -428,6 +469,9 @@ public partial class InvoiceListViewModel : ObservableObject
     [ObservableProperty]
     private string? _lookupSellerTaxCode;
 
+    [ObservableProperty]
+    private string? _lookupProviderTaxCode;
+
     /// <summary>True nếu gợi ý thuộc HTInvoice (để hiện nút Tự lấy PDF).</summary>
     [ObservableProperty]
     private bool _isHtInvoiceLookup;
@@ -458,6 +502,7 @@ public partial class InvoiceListViewModel : ObservableObject
         IInvoiceDetailViewService invoiceDetailViewService,
         IInvoicePdfService invoicePdfService,
         IBackgroundJobService backgroundJobService,
+        IScoSyncRecoveryPlanner scoRecoveryPlanner,
         ILoggerFactory loggerFactory)
     {
         _companyService = companyService;
@@ -468,11 +513,14 @@ public partial class InvoiceListViewModel : ObservableObject
         _invoiceDetailViewService = invoiceDetailViewService;
         _invoicePdfService = invoicePdfService;
         _backgroundJobService = backgroundJobService;
+        _scoRecoveryPlanner = scoRecoveryPlanner;
         _logger = loggerFactory.CreateLogger<InvoiceListViewModel>();
         SetDefaultFilterDates();
 
         // Lắng nghe job nền hoàn thành (đặc biệt là job tải XML hàng loạt) để tự refresh trạng thái cột XML.
         BackgroundJobToastNotificationService.JobCompleted += OnBackgroundJobCompleted;
+        BackgroundJobLiveProgressNotifier.BulkXmlProgress += OnLiveBulkXmlProgress;
+        BackgroundJobLiveProgressNotifier.BulkPdfItem += OnLiveBulkPdfItem;
     }
 
     /// <summary>Gọi khi một job nền hoàn thành. Nếu là job tải XML hàng loạt cho đúng công ty hiện tại thì refresh trạng thái XML trên lưới.</summary>
@@ -480,11 +528,27 @@ public partial class InvoiceListViewModel : ObservableObject
     {
         if (CompanyId == null) return;
         if (job.CompanyId != CompanyId.Value) return;
-        if (job.Type != BackgroundJobType.DownloadXmlBulk) return;
         if (job.Status != BackgroundJobStatus.Completed && job.Status != BackgroundJobStatus.Failed) return;
 
-        // XML đã được lưu xuống thư mục ExportXml; tăng trigger để UI hỏi lại trạng thái trên đĩa và cập nhật icon.
-        XmlStateRefreshTrigger++;
+        if (job.Type == BackgroundJobType.DownloadXmlBulk)
+        {
+            XmlStateRefreshTrigger++;
+            return;
+        }
+
+        if (job.Type == BackgroundJobType.DownloadPdfBulk)
+        {
+            PdfStateRefreshTrigger++;
+        }
+
+        if (job.Id == _trackedBulkJobId &&
+            (job.Type == BackgroundJobType.DownloadXmlBulk || job.Type == BackgroundJobType.DownloadPdfBulk))
+        {
+            InvokeOnUi(() => TryFinalizeBulkJobUi(job));
+        }
+
+        if (job.Type == BackgroundJobType.ScoRecovery)
+            _ = LoadCompanyAndInvoicesAsync();
     }
 
     [RelayCommand]
@@ -728,6 +792,8 @@ public partial class InvoiceListViewModel : ObservableObject
             string.IsNullOrWhiteSpace(FilterTenNguoiBan) ? null : FilterTenNguoiBan.Trim(),
             string.IsNullOrWhiteSpace(FilterMstLoaiTru) ? null : FilterMstLoaiTru.Trim(),
             string.IsNullOrWhiteSpace(FilterLoaiTruBenBan) ? null : FilterLoaiTruBenBan.Trim(),
+            null,
+            null,
             string.IsNullOrWhiteSpace(SortBy) ? null : SortBy,
             SortDescending
         );
@@ -924,7 +990,8 @@ public partial class InvoiceListViewModel : ObservableObject
             StatusMessage = "Không có công ty được chọn.";
             return;
         }
-        if (IsBusy) return;
+        if (IsBusy || IsSyncInProgress) return;
+        IsSyncInProgress = true;
         IsBusy = true;
         StatusMessage = "Đang đồng bộ hóa đơn...";
         try
@@ -934,8 +1001,24 @@ public partial class InvoiceListViewModel : ObservableObject
             var result = await _invoiceSyncService.SyncInvoicesAsync(CompanyId.Value, fromDate, toDate, IncludeDetail, isSold).ConfigureAwait(true);
             if (result.Success)
             {
-                StatusMessage = $"Đồng bộ xong. Đã lưu {result.TotalSynced} hóa đơn.";
                 await LoadCompanyAndInvoicesAsync().ConfigureAwait(true);
+                StatusMessage = $"Đồng bộ xong. Đã lưu {result.TotalSynced} hóa đơn.";
+                if (!string.IsNullOrWhiteSpace(result.Message))
+                    StatusMessage += Environment.NewLine + result.Message;
+
+                var recoveryPlan = _scoRecoveryPlanner.Plan(result, IncludeDetail);
+                if (recoveryPlan.ShouldEnqueue)
+                {
+                    var enqueued = await _backgroundJobService.EnqueueScoRecoveryAsync(new ScoRecoveryEnqueueDto(
+                        CompanyId.Value,
+                        isSold,
+                        fromDate,
+                        toDate,
+                        IncludeDetail,
+                        recoveryPlan)).ConfigureAwait(true);
+                    if (enqueued != null)
+                        StatusMessage += Environment.NewLine + "Hệ thống sẽ thử lại hóa đơn máy tính tiền (SCO) trong nền; bạn sẽ nhận thông báo khi xong.";
+                }
             }
             else
             {
@@ -949,6 +1032,7 @@ public partial class InvoiceListViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            IsSyncInProgress = false;
         }
     }
 
@@ -1073,7 +1157,6 @@ public partial class InvoiceListViewModel : ObservableObject
     {
         if (CompanyId == null) return;
 
-        // Lấy toàn bộ danh sách hóa đơn theo bộ lọc hiện tại từ database (không chỉ trang đang hiển thị).
         List<InvoiceDisplayDto> list;
         try
         {
@@ -1097,26 +1180,10 @@ public partial class InvoiceListViewModel : ObservableObject
             return;
         }
 
-        // Chuẩn bị popup và trạng thái tiến trình.
-        IsDownloadingXml = true;
-        IsDownloadPdfResults = false;
-        DownloadTotal = list.Count;
-        DownloadCurrentIndex = 0;
-        DownloadSucceeded = 0;
-        DownloadFailed = 0;
-        DownloadNoXml = 0;
-        DownloadSkipped = 0;
-        DownloadResults.Clear();
-
-        foreach (var inv in list)
-        {
-            var displayInit = inv.SoHoaDonDisplay ?? $"{inv.KyHieu}-{inv.SoHoaDon}";
-            DownloadResults.Add(new DownloadItemResultViewModel(displayInit, success: false, noXml: false, message: "Chờ tải...", isSkipped: true));
-        }
-
-        IsDownloadXmlPopupOpen = true;
-        DownloadXmlProgressText = $"Đang chuẩn bị tải XML cho {list.Count} hóa đơn...";
-        StatusMessage = "Đang tải XML hàng loạt cho các hóa đơn theo bộ lọc...";
+        PrepareBulkPopupRows(list, isPdf: false);
+        BulkDownloadStep = BulkDownloadStepKind.Preparation;
+        DownloadXmlProgressText = $"Bước 1 — Đã chuẩn bị {list.Count} chứng từ theo bộ lọc. Đang đưa vào hàng đợi tải XML…";
+        StatusMessage = "Đang tải XML hàng loạt (job nền)…";
 
         try
         {
@@ -1126,66 +1193,35 @@ public partial class InvoiceListViewModel : ObservableObject
         {
             StatusMessage = "Không tạo được thư mục lưu XML: " + ex.Message;
             SetIsDownloadingXmlFalseOnUi();
+            BulkDownloadStep = BulkDownloadStepKind.None;
             return;
         }
 
         try
         {
-            var total = list.Count;
-            var progress = new Progress<DownloadXmlProgress>(p =>
-            {
-                if (p.ItemResult is { } item)
-                {
-                    var index = p.Current - 1;
-                    if (index < 0 || index >= DownloadResults.Count)
-                        index = Math.Clamp(index, 0, DownloadResults.Count - 1);
-
-                    var display = item.SoHoaDonDisplay;
-                    var vmItem = new DownloadItemResultViewModel(display, item.Success, item.NoXml, item.Message ?? "", isSkipped: false);
-
-                    InvokeOnUi(() =>
-                    {
-                        DownloadCurrentIndex = p.Current;
-                        DownloadXmlProgressText = $"Đang tải XML hóa đơn {p.Current}/{total}: {display}";
-
-                        if (index >= 0 && index < DownloadResults.Count)
-                            DownloadResults[index] = vmItem;
-
-                        if (item.Success) DownloadSucceeded++;
-                        else if (item.NoXml) DownloadNoXml++;
-                        else DownloadFailed++;
-
-                        // Cập nhật trạng thái XML cho cột XML.
-                        _xmlStateByKey[item.InvoiceKey] = item.Success
-                            ? XmlDownloadState.Downloaded
-                            : (item.NoXml ? XmlDownloadState.NoXml : XmlDownloadState.None);
-                    });
-                }
-            });
-
-            var result = await _invoiceSyncService
-                .DownloadInvoicesXmlAsync(CompanyId.Value, list, ExportXmlFolderPath, progress)
+            await Task.Delay(50).ConfigureAwait(true);
+            BulkDownloadStep = BulkDownloadStepKind.Downloading;
+            var job = await _backgroundJobService
+                .EnqueueDownloadXmlBulkAsync(new BulkDownloadCreateDto(
+                    CompanyId.Value,
+                    FilterDirection == FilterDirectionKind.BanRa,
+                    list.Select(i => i.Id).ToList(),
+                    ExportXmlFolderPath))
                 .ConfigureAwait(true);
-
-            InvokeOnUi(() =>
-            {
-                XmlStateRefreshTrigger++;
-                if (!string.IsNullOrEmpty(result.ZipPath))
-                    LastXmlZipPath = result.ZipPath;
-
-                DownloadCurrentIndex = total;
-                DownloadXmlProgressText =
-                    $"Đã xong tải XML hàng loạt. Thành công: {DownloadSucceeded} | Thất bại: {DownloadFailed} | Không có XML: {DownloadNoXml}";
-                StatusMessage = DownloadXmlProgressText;
-            });
+            _trackedBulkJobId = job.Id;
+            _bulkDownloadIsPdf = false;
+            _sourceJobIdForRetry = job.Id;
+            _bulkFinalizeDone = false;
+            HasFailedXmlInLastBatch = false;
+            HasFailedPdfInLastBatch = false;
+            StartBulkJobPolling();
+            DownloadXmlProgressText = $"Bước 2 — Đang tải XML: 0/{list.Count} (job nền).";
         }
         catch (Exception ex)
         {
-            StatusMessage = "Lỗi tải XML hàng loạt: " + ex.Message;
-        }
-        finally
-        {
+            StatusMessage = "Lỗi tạo job tải XML hàng loạt: " + ex.Message;
             SetIsDownloadingXmlFalseOnUi();
+            BulkDownloadStep = BulkDownloadStepKind.None;
         }
     }
 
@@ -1212,7 +1248,6 @@ public partial class InvoiceListViewModel : ObservableObject
     {
         if (CompanyId == null) return;
 
-        // Lấy toàn bộ danh sách hóa đơn theo bộ lọc hiện tại từ database (không chỉ trang đang hiển thị).
         List<InvoiceDisplayDto> list;
         try
         {
@@ -1236,119 +1271,36 @@ public partial class InvoiceListViewModel : ObservableObject
             return;
         }
 
-        IsDownloadingXml = true;
-        IsDownloadPdfResults = true;
-        DownloadTotal = list.Count;
-        DownloadCurrentIndex = 0;
-        DownloadSucceeded = 0;
-        DownloadFailed = 0;
-        DownloadNoXml = 0;
-        DownloadSkipped = 0;
-        DownloadResults.Clear();
-
-        foreach (var inv in list)
-        {
-            var displayInit = inv.SoHoaDonDisplay ?? $"{inv.KyHieu}-{inv.SoHoaDon}";
-            DownloadResults.Add(new DownloadItemResultViewModel(displayInit, success: false, noXml: false, message: "Chờ tải...", isSkipped: true));
-        }
-
-        IsDownloadXmlPopupOpen = true;
-        DownloadXmlProgressText = $"Đang chuẩn bị tải PDF cho {list.Count} hóa đơn...";
-        StatusMessage = "Đang tải PDF hàng loạt cho các hóa đơn theo bộ lọc...";
+        PrepareBulkPopupRows(list, isPdf: true);
+        BulkDownloadStep = BulkDownloadStepKind.Preparation;
+        DownloadXmlProgressText = $"Bước 1 — Đã chuẩn bị {list.Count} chứng từ theo bộ lọc. Đang đưa vào hàng đợi tải PDF…";
+        StatusMessage = "Đang tải PDF hàng loạt (job nền)…";
 
         try
         {
-            var total = list.Count;
-
-            for (var i = 0; i < total; i++)
-            {
-                var inv = list[i];
-                var display = inv.SoHoaDonDisplay ?? $"{inv.KyHieu}-{inv.SoHoaDon}";
-                var index = i;
-
-                InvokeOnUi(() =>
-                {
-                    DownloadCurrentIndex = index + 1;
-                    DownloadXmlProgressText = $"Đang tải PDF hóa đơn {index + 1}/{total}: {display}";
-                    if (index >= 0 && index < DownloadResults.Count)
-                        DownloadResults[index] = new DownloadItemResultViewModel(display, success: false, noXml: false, message: "Đang tải...", isSkipped: false);
-                });
-
-                try
-                {
-                    var result = await _invoicePdfService
-                        .GetPdfForInvoiceByExternalIdAsync(CompanyId.Value, inv.Id)
-                        .ConfigureAwait(true);
-
-                    if (result is InvoicePdfResult.Success success)
-                    {
-                        var pdfPath = GetPdfPathForInvoice(inv);
-                        var pdfFolder = Path.GetDirectoryName(pdfPath) ?? GetCompanyPdfFolder();
-                        Directory.CreateDirectory(pdfFolder);
-                        await File.WriteAllBytesAsync(pdfPath, success.PdfBytes).ConfigureAwait(false);
-
-                        var key = GetExportBaseName(inv);
-                        _pdfStateByKey[key] = true;
-
-                        var itemSuccess = new DownloadItemResultViewModel(display, true, false, "Đã tải PDF", isSkipped: false);
-                        InvokeOnUi(() =>
-                        {
-                            DownloadSucceeded++;
-                            if (index >= 0 && index < DownloadResults.Count)
-                                DownloadResults[index] = itemSuccess;
-                        });
-                    }
-                    else if (result is InvoicePdfResult.Failure f)
-                    {
-                        var msg = NormalizePdfErrorMessage(f.ErrorMessage ?? "Lỗi tải PDF.");
-                        var skipped = IsPdfSkipReason(msg);
-                        var itemFail = new DownloadItemResultViewModel(display, false, false, msg, isSkipped: skipped);
-                        InvokeOnUi(() =>
-                        {
-                            if (skipped) DownloadSkipped++; else DownloadFailed++;
-                            if (index >= 0 && index < DownloadResults.Count)
-                                DownloadResults[index] = itemFail;
-                        });
-                    }
-                    else
-                    {
-                        var itemFail = new DownloadItemResultViewModel(display, false, false, "Không lấy được PDF.", isSkipped: false);
-                        InvokeOnUi(() =>
-                        {
-                            DownloadFailed++;
-                            if (index >= 0 && index < DownloadResults.Count)
-                                DownloadResults[index] = itemFail;
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var itemEx = new DownloadItemResultViewModel(display, false, false, "Lỗi: " + ex.Message, isSkipped: false);
-                    InvokeOnUi(() =>
-                    {
-                        DownloadFailed++;
-                        if (index >= 0 && index < DownloadResults.Count)
-                            DownloadResults[index] = itemEx;
-                    });
-                }
-            }
-
-            InvokeOnUi(() =>
-            {
-                PdfStateRefreshTrigger++;
-                DownloadCurrentIndex = total;
-                DownloadXmlProgressText =
-                    $"Đã xong tải PDF hàng loạt. Thành công: {DownloadSucceeded} | Thất bại: {DownloadFailed} | Bỏ qua (chưa cấu hình): {DownloadSkipped}";
-                StatusMessage = DownloadXmlProgressText;
-            });
+            await Task.Delay(50).ConfigureAwait(true);
+            BulkDownloadStep = BulkDownloadStepKind.Downloading;
+            var job = await _backgroundJobService
+                .EnqueueDownloadPdfBulkAsync(new BulkDownloadCreateDto(
+                    CompanyId.Value,
+                    FilterDirection == FilterDirectionKind.BanRa,
+                    list.Select(i => i.Id).ToList(),
+                    ExportXmlFolderPath: null))
+                .ConfigureAwait(true);
+            _trackedBulkJobId = job.Id;
+            _bulkDownloadIsPdf = true;
+            _sourceJobIdForRetry = job.Id;
+            _bulkFinalizeDone = false;
+            HasFailedXmlInLastBatch = false;
+            HasFailedPdfInLastBatch = false;
+            StartBulkJobPolling();
+            DownloadXmlProgressText = $"Bước 2 — Đang tải PDF: 0/{list.Count} (job nền).";
         }
         catch (Exception ex)
         {
-            StatusMessage = "Lỗi tải PDF hàng loạt: " + ex.Message;
-        }
-        finally
-        {
+            StatusMessage = "Lỗi tạo job tải PDF hàng loạt: " + ex.Message;
             SetIsDownloadingXmlFalseOnUi();
+            BulkDownloadStep = BulkDownloadStepKind.None;
         }
     }
 
@@ -1372,6 +1324,223 @@ public partial class InvoiceListViewModel : ObservableObject
             return;
         }
         app?.Dispatcher.BeginInvoke(new Action(() => IsDownloadingXml = false));
+    }
+
+    private void PrepareBulkPopupRows(IReadOnlyList<InvoiceDisplayDto> list, bool isPdf)
+    {
+        IsDownloadingXml = true;
+        IsDownloadPdfResults = isPdf;
+        DownloadTotal = list.Count;
+        DownloadCurrentIndex = 0;
+        DownloadSucceeded = 0;
+        DownloadFailed = 0;
+        DownloadNoXml = 0;
+        DownloadSkipped = 0;
+        DownloadResults.Clear();
+        _bulkRowExternalIds.Clear();
+        foreach (var inv in list)
+        {
+            var display = inv.SoHoaDonDisplay ?? $"{inv.KyHieu}-{inv.SoHoaDon}";
+            _bulkRowExternalIds.Add(inv.Id);
+            DownloadResults.Add(new DownloadItemResultViewModel(
+                display, false, false, "Chờ tải…", isSkipped: true, externalId: inv.Id));
+        }
+        IsDownloadXmlPopupOpen = true;
+    }
+
+    private void StartBulkJobPolling()
+    {
+        StopBulkJobPolling();
+        _bulkJobPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+        _bulkJobPollTimer.Tick += OnBulkJobPollTick;
+        _bulkJobPollTimer.Start();
+    }
+
+    private void StopBulkJobPolling()
+    {
+        if (_bulkJobPollTimer == null) return;
+        _bulkJobPollTimer.Tick -= OnBulkJobPollTick;
+        _bulkJobPollTimer.Stop();
+        _bulkJobPollTimer = null;
+    }
+
+    private async void OnBulkJobPollTick(object? sender, EventArgs e)
+    {
+        if (_trackedBulkJobId == null) return;
+        try
+        {
+            var job = await _backgroundJobService.GetJobByIdAsync(_trackedBulkJobId.Value).ConfigureAwait(true);
+            if (job == null) return;
+            InvokeOnUi(() =>
+            {
+                DownloadCurrentIndex = job.ProgressCurrent;
+                if (job.Status == BackgroundJobStatus.Completed || job.Status == BackgroundJobStatus.Failed)
+                    TryFinalizeBulkJobUi(job);
+            });
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
+    private void OnLiveBulkXmlProgress(Guid jobId, DownloadXmlProgress p)
+    {
+        if (jobId != _trackedBulkJobId || _bulkDownloadIsPdf) return;
+
+        if (p.ItemResult is not { } item)
+        {
+            InvokeOnUi(() =>
+            {
+                var index = p.Current - 1;
+                if (index < 0 || index >= DownloadResults.Count)
+                    index = Math.Clamp(index, 0, Math.Max(0, DownloadResults.Count - 1));
+                var display = index >= 0 && index < DownloadResults.Count
+                    ? DownloadResults[index].SoHoaDonDisplay
+                    : $"#{p.Current}";
+                var ext = index >= 0 && index < _bulkRowExternalIds.Count ? _bulkRowExternalIds[index] : null;
+                var pending = new DownloadItemResultViewModel(
+                    display, false, false, "Đang tải XML…", isSkipped: false, externalId: ext, isInProgress: true);
+                DownloadCurrentIndex = p.Current;
+                DownloadXmlProgressText = $"Bước 2 — Đang tải XML {p.Current}/{p.Total}: {display}";
+                if (index >= 0 && index < DownloadResults.Count)
+                    DownloadResults[index] = pending;
+            });
+            return;
+        }
+
+        InvokeOnUi(() =>
+        {
+            var index = p.Current - 1;
+            if (index < 0 || index >= DownloadResults.Count)
+                index = Math.Clamp(index, 0, Math.Max(0, DownloadResults.Count - 1));
+
+            var display = item.SoHoaDonDisplay;
+            var ext = item.ExternalInvoiceId ?? (index >= 0 && index < _bulkRowExternalIds.Count ? _bulkRowExternalIds[index] : null);
+            var vmItem = new DownloadItemResultViewModel(
+                display, item.Success, item.NoXml, item.Message ?? "", isSkipped: false,
+                externalId: ext);
+
+            DownloadCurrentIndex = p.Current;
+            DownloadXmlProgressText = $"Bước 2 — Đang tải XML {p.Current}/{p.Total}: {display}";
+
+            if (index >= 0 && index < DownloadResults.Count)
+                DownloadResults[index] = vmItem;
+
+            _xmlStateByKey[item.InvoiceKey] = item.Success
+                ? XmlDownloadState.Downloaded
+                : (item.NoXml ? XmlDownloadState.NoXml : XmlDownloadState.None);
+
+            RecalculateDownloadStats(isPdf: false);
+        });
+    }
+
+    private void OnLiveBulkPdfItem(BulkPdfItemProgress item)
+    {
+        if (item.JobId != _trackedBulkJobId || !_bulkDownloadIsPdf) return;
+
+        InvokeOnUi(() =>
+        {
+            var index = item.Current - 1;
+            if (index < 0 || index >= DownloadResults.Count)
+                index = Math.Clamp(index, 0, Math.Max(0, DownloadResults.Count - 1));
+
+            if (item.IsStartOfItem)
+            {
+                var pending = new DownloadItemResultViewModel(
+                    item.DisplayLabel,
+                    success: false,
+                    noXml: false,
+                    item.Message ?? "Đang tải PDF…",
+                    isSkipped: false,
+                    externalId: item.ExternalId,
+                    needsManualLookup: false,
+                    isInProgress: true);
+                DownloadCurrentIndex = item.Current;
+                DownloadXmlProgressText = $"Bước 2 — Đang tải PDF {item.Current}/{item.Total}: {item.DisplayLabel}";
+                if (index >= 0 && index < DownloadResults.Count)
+                    DownloadResults[index] = pending;
+                return;
+            }
+
+            var success = item.Success;
+            var skipped = item.Skipped;
+            var vmItem = new DownloadItemResultViewModel(
+                item.DisplayLabel,
+                success,
+                noXml: false,
+                item.Message ?? "",
+                isSkipped: skipped,
+                externalId: item.ExternalId,
+                needsManualLookup: item.NeedsManualIntervention);
+
+            DownloadCurrentIndex = item.Current;
+            DownloadXmlProgressText = $"Bước 2 — Đang tải PDF {item.Current}/{item.Total}: {item.DisplayLabel}";
+
+            if (index >= 0 && index < DownloadResults.Count)
+                DownloadResults[index] = vmItem;
+
+            RecalculateDownloadStats(isPdf: true);
+        });
+    }
+
+    private void RecalculateDownloadStats(bool isPdf)
+    {
+        int s = 0, f = 0, n = 0, sk = 0;
+        foreach (var x in DownloadResults)
+        {
+            if (x.Success) s++;
+            else if (x.NoXml) n++;
+            else if (x.IsSkipped) sk++;
+            else if (!string.IsNullOrEmpty(x.Message) &&
+                     !x.Message.StartsWith("Chờ", StringComparison.OrdinalIgnoreCase) &&
+                     !x.Message.StartsWith("Đang", StringComparison.OrdinalIgnoreCase))
+                f++;
+        }
+        DownloadSucceeded = s;
+        DownloadFailed = f;
+        DownloadNoXml = n;
+        DownloadSkipped = sk;
+    }
+
+    private void TryFinalizeBulkJobUi(BackgroundJobDto job)
+    {
+        if (job.Id != _trackedBulkJobId || _bulkFinalizeDone) return;
+        _bulkFinalizeDone = true;
+        StopBulkJobPolling();
+
+        BulkDownloadStep = BulkDownloadStepKind.Completed;
+        DownloadCurrentIndex = job.ProgressTotal;
+
+        if (job.Type == BackgroundJobType.DownloadXmlBulk)
+        {
+            XmlStateRefreshTrigger++;
+            if (!string.IsNullOrEmpty(job.ResultPath))
+                LastXmlZipPath = job.ResultPath;
+            DownloadXmlProgressText =
+                $"Hoàn thành tải XML. Thành công: {job.XmlDownloadedCount} | Thất bại: {job.XmlFailedCount} | Không có XML: {job.XmlNoXmlCount}";
+            if (!string.IsNullOrWhiteSpace(job.LastError))
+                DownloadXmlProgressText += Environment.NewLine + job.LastError;
+            StatusMessage = DownloadXmlProgressText;
+        }
+        else if (job.Type == BackgroundJobType.DownloadPdfBulk)
+        {
+            PdfStateRefreshTrigger++;
+            DownloadXmlProgressText =
+                $"Hoàn thành tải PDF. Thành công: {job.XmlDownloadedCount} | Thất bại: {job.XmlFailedCount} | Bỏ qua: {job.XmlNoXmlCount}";
+            if (!string.IsNullOrWhiteSpace(job.LastError))
+                DownloadXmlProgressText += Environment.NewLine + job.LastError;
+            StatusMessage = DownloadXmlProgressText;
+        }
+
+        var summary = JobFailureSummary.Parse(job.FailureSummaryJson);
+        HasFailedXmlInLastBatch = summary.XmlFailedIds.Count > 0;
+        HasFailedPdfInLastBatch = summary.PdfFailedIds.Count > 0;
+        _sourceJobIdForRetry = job.Id;
+
+        SetIsDownloadingXmlFalseOnUi();
+        RetryFailedPdfCommand.NotifyCanExecuteChanged();
+        RetryFailedXmlCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Lỗi do thiếu cấu hình / link / mã tra cứu → coi là bỏ qua, không phải lỗi thực thi.</summary>
@@ -1399,137 +1568,101 @@ public partial class InvoiceListViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanRetryFailedPdf))]
     private async Task RetryFailedPdfAsync()
     {
-        List<InvoiceDisplayDto> failed;
-        lock (_lastPdfFailedInvoices)
-        {
-            failed = _lastPdfFailedInvoices.ToList();
-        }
-        if (CompanyId == null || failed.Count == 0) return;
-
-        IsDownloadingXml = true;
-        IsDownloadPdfResults = true;
-        DownloadTotal = failed.Count;
-        DownloadCurrentIndex = 0;
-        DownloadSucceeded = 0;
-        DownloadFailed = 0;
-        DownloadNoXml = 0;
-        DownloadSkipped = 0;
-        DownloadResults.Clear();
-        _lastPdfFailedInvoices.Clear();
-        HasFailedPdfInLastBatch = false;
-        // Khởi tạo danh sách: tất cả hóa đơn thất bại ở trạng thái "Chờ tải lại..."
-        foreach (var inv in failed)
-        {
-            var displayInit = inv.SoHoaDonDisplay ?? $"{inv.KyHieu}-{inv.SoHoaDon}";
-            DownloadResults.Add(new DownloadItemResultViewModel(displayInit, success: false, noXml: false, message: "Chờ tải lại...", isSkipped: true));
-        }
-        IsDownloadXmlPopupOpen = true;
-        DownloadXmlProgressText = "Đang chuẩn bị tải lại các hóa đơn thất bại...";
-        StatusMessage = "Đang tải lại PDF cho các hóa đơn thất bại...";
-
+        if (CompanyId == null || _sourceJobIdForRetry == null) return;
         try
         {
-            var total = failed.Count;
-            for (var i = 0; i < total; i++)
+            var prevJob = await _backgroundJobService.GetJobByIdAsync(_sourceJobIdForRetry.Value).ConfigureAwait(true);
+            var summary = JobFailureSummary.Parse(prevJob?.FailureSummaryJson);
+            if (summary.PdfFailedIds.Count == 0) return;
+
+            var ids = summary.PdfFailedIds;
+            var list = await _invoiceSyncService
+                .GetInvoicesByIdsAsync(CompanyId.Value, ids)
+                .ConfigureAwait(true);
+            if (list.Count == 0)
             {
-                var inv = failed[i];
-                var display = inv.SoHoaDonDisplay ?? $"{inv.KyHieu}-{inv.SoHoaDon}";
-                var index = i + 1;
-                InvokeOnUi(() =>
-                {
-                    DownloadCurrentIndex = index;
-                    DownloadXmlProgressText = $"Đang tải lại PDF hóa đơn {index}/{total}: {display}";
-                    if (i >= 0 && i < DownloadResults.Count)
-                        DownloadResults[i] = new DownloadItemResultViewModel(display, success: false, noXml: false, message: "Đang tải lại...", isSkipped: false);
-                });
-
-                try
-                {
-                    var result = await _invoicePdfService
-                        .GetPdfForInvoiceByExternalIdAsync(CompanyId.Value, inv.Id)
-                        .ConfigureAwait(true);
-
-                    if (result is InvoicePdfResult.Success success)
-                    {
-                        var pdfPath = GetPdfPathForInvoice(inv);
-                        var pdfFolder = Path.GetDirectoryName(pdfPath) ?? GetCompanyPdfFolder();
-                        Directory.CreateDirectory(pdfFolder);
-                        await File.WriteAllBytesAsync(pdfPath, success.PdfBytes).ConfigureAwait(false);
-
-                        var key = GetExportBaseName(inv);
-                        _pdfStateByKey[key] = true;
-
-                        var itemSuccess = new DownloadItemResultViewModel(display, true, false, "Đã tải PDF (lần 2)", isSkipped: false);
-                        InvokeOnUi(() =>
-                        {
-                            DownloadSucceeded++;
-                            DownloadResults[i] = itemSuccess;
-                        });
-                    }
-                    else if (result is InvoicePdfResult.Failure f)
-                    {
-                        var msg = NormalizePdfErrorMessage(f.ErrorMessage ?? "Lỗi tải PDF.");
-                        var skipped = IsPdfSkipReason(msg);
-                        var itemFail = new DownloadItemResultViewModel(display, false, false, msg, isSkipped: skipped);
-                        InvokeOnUi(() =>
-                        {
-                            if (skipped) DownloadSkipped++; else DownloadFailed++;
-                            DownloadResults[i] = itemFail;
-                        });
-                        if (!skipped)
-                        {
-                            lock (_lastPdfFailedInvoices)
-                            {
-                                _lastPdfFailedInvoices.Add(inv);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        var itemFail = new DownloadItemResultViewModel(display, false, false, "Không lấy được PDF.", isSkipped: false);
-                        InvokeOnUi(() =>
-                        {
-                            DownloadFailed++;
-                            DownloadResults[i] = itemFail;
-                        });
-                        lock (_lastPdfFailedInvoices)
-                        {
-                            _lastPdfFailedInvoices.Add(inv);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var itemEx = new DownloadItemResultViewModel(display, false, false, "Lỗi: " + ex.Message, isSkipped: false);
-                    InvokeOnUi(() =>
-                    {
-                        DownloadFailed++;
-                        DownloadResults[i] = itemEx;
-                    });
-                    lock (_lastPdfFailedInvoices)
-                    {
-                        _lastPdfFailedInvoices.Add(inv);
-                    }
-                }
+                StatusMessage = "Không tìm thấy hóa đơn để tải lại PDF.";
+                return;
             }
 
-            InvokeOnUi(() =>
-            {
-                PdfStateRefreshTrigger++;
-                DownloadCurrentIndex = total;
-                DownloadXmlProgressText = $"Đã xong lần tải lại. Thành công: {DownloadSucceeded} | Thất bại: {DownloadFailed} | Bỏ qua (chưa cấu hình): {DownloadSkipped}";
-                StatusMessage = DownloadXmlProgressText;
-                HasFailedPdfInLastBatch = DownloadFailed > 0;
-            });
+            PrepareBulkPopupRows(list, isPdf: true);
+            BulkDownloadStep = BulkDownloadStepKind.Downloading;
+            HasFailedPdfInLastBatch = false;
+            _bulkFinalizeDone = false;
+
+            var job = await _backgroundJobService
+                .EnqueueRetryFailedInvoicesAsync(_sourceJobIdForRetry.Value, BackgroundJobRetryMode.Pdf)
+                .ConfigureAwait(true);
+            _trackedBulkJobId = job.Id;
+            _bulkDownloadIsPdf = true;
+            _sourceJobIdForRetry = job.Id;
+            StartBulkJobPolling();
+            DownloadXmlProgressText = $"Tải lại PDF (job nền): 0/{list.Count}";
+            StatusMessage = "Đã tạo job tải lại PDF cho các hóa đơn thất bại.";
         }
-        finally
+        catch (Exception ex)
         {
+            StatusMessage = "Lỗi tải lại PDF: " + ex.Message;
+            SetIsDownloadingXmlFalseOnUi();
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRetryFailedXml))]
+    private async Task RetryFailedXmlAsync()
+    {
+        if (CompanyId == null || _sourceJobIdForRetry == null) return;
+        try
+        {
+            var prevJob = await _backgroundJobService.GetJobByIdAsync(_sourceJobIdForRetry.Value).ConfigureAwait(true);
+            var ids = JobFailureSummary.Parse(prevJob?.FailureSummaryJson).XmlFailedIds;
+            if (ids.Count == 0) return;
+
+            var list = await _invoiceSyncService
+                .GetInvoicesByIdsAsync(CompanyId.Value, ids)
+                .ConfigureAwait(true);
+            if (list.Count == 0)
+            {
+                StatusMessage = "Không tìm thấy hóa đơn để tải lại XML.";
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(ExportXmlFolderPath);
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = "Không tạo được thư mục lưu XML: " + ex.Message;
+                return;
+            }
+
+            PrepareBulkPopupRows(list, isPdf: false);
+            BulkDownloadStep = BulkDownloadStepKind.Downloading;
+            HasFailedXmlInLastBatch = false;
+            _bulkFinalizeDone = false;
+
+            var job = await _backgroundJobService
+                .EnqueueRetryFailedInvoicesAsync(_sourceJobIdForRetry.Value, BackgroundJobRetryMode.Xml)
+                .ConfigureAwait(true);
+            _trackedBulkJobId = job.Id;
+            _bulkDownloadIsPdf = false;
+            _sourceJobIdForRetry = job.Id;
+            StartBulkJobPolling();
+            DownloadXmlProgressText = $"Tải lại XML (job nền): 0/{list.Count}";
+            StatusMessage = "Đã tạo job tải lại XML cho các hóa đơn thất bại.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Lỗi tải lại XML: " + ex.Message;
             SetIsDownloadingXmlFalseOnUi();
         }
     }
 
     private bool CanRetryFailedPdf() =>
-        HasFailedPdfInLastBatch && !IsDownloadingXml && !IsBusy && CompanyId != null;
+        HasFailedPdfInLastBatch && !IsDownloadingXml && !IsBusy && CompanyId != null && _sourceJobIdForRetry != null;
+
+    private bool CanRetryFailedXml() =>
+        HasFailedXmlInLastBatch && !IsDownloadingXml && !IsBusy && CompanyId != null && _sourceJobIdForRetry != null;
 
     private bool CanDownloadAllPdf() => !IsDownloadingXml && !IsBusy && CompanyId != null && TotalCount > 0;
 
@@ -1537,7 +1670,13 @@ public partial class InvoiceListViewModel : ObservableObject
     {
         DownloadAllXmlCommand.NotifyCanExecuteChanged();
         DownloadAllPdfCommand.NotifyCanExecuteChanged();
+        RetryFailedPdfCommand.NotifyCanExecuteChanged();
+        RetryFailedXmlCommand.NotifyCanExecuteChanged();
     }
+
+    partial void OnHasFailedXmlInLastBatchChanged(bool value) => RetryFailedXmlCommand.NotifyCanExecuteChanged();
+
+    partial void OnHasFailedPdfInLastBatchChanged(bool value) => RetryFailedPdfCommand.NotifyCanExecuteChanged();
 
     partial void OnXmlStateRefreshTriggerChanged(int value) => UpdateXmlPdfCounts();
     partial void OnPdfStateRefreshTriggerChanged(int value) => UpdateXmlPdfCounts();
@@ -1570,7 +1709,43 @@ public partial class InvoiceListViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void CloseDownloadXmlPopup() => IsDownloadXmlPopupOpen = false;
+    private void CloseDownloadXmlPopup()
+    {
+        IsDownloadXmlPopupOpen = false;
+        StopBulkJobPolling();
+    }
+
+    [RelayCommand]
+    private async Task OpenBulkRowLookupAsync(DownloadItemResultViewModel? row)
+    {
+        if (CompanyId == null || string.IsNullOrWhiteSpace(row?.ExternalId)) return;
+        try
+        {
+            StatusMessage = "Đang lấy thông tin gợi ý tra cứu…";
+            var suggestion = await _invoicePdfService
+                .GetLookupSuggestionAsync(CompanyId.Value, row.ExternalId)
+                .ConfigureAwait(true);
+            if (suggestion == null)
+            {
+                StatusMessage = "Không lấy được gợi ý tra cứu.";
+                return;
+            }
+
+            LookupProviderKey = suggestion.ProviderKey;
+            LookupProviderName = suggestion.ProviderName ?? suggestion.ProviderKey;
+            LookupSearchUrl = suggestion.SearchUrl;
+            LookupSecretCode = suggestion.SecretCode;
+            LookupSellerTaxCode = suggestion.SellerTaxCode;
+            LookupProviderTaxCode = suggestion.ProviderTaxCode;
+            IsHtInvoiceLookup = IsHtInvoiceProviderKey(suggestion.ProviderKey);
+            IsLookupPopupOpen = true;
+            StatusMessage = "Đã lấy thông tin gợi ý tra cứu.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Lỗi lấy gợi ý tra cứu: " + ex.Message;
+        }
+    }
 
     [RelayCommand]
     private void OpenXmlZipFolder()
@@ -1578,22 +1753,29 @@ public partial class InvoiceListViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(LastXmlZipPath)) return;
         try
         {
-            var dir = Path.GetDirectoryName(LastXmlZipPath);
-            if (dir == null || !Directory.Exists(dir))
+            var path = LastXmlZipPath.Trim();
+            string dir;
+            if (Directory.Exists(path))
+                dir = path;
+            else if (File.Exists(path))
+                dir = Path.GetDirectoryName(path) ?? path;
+            else
             {
-                StatusMessage = "Thư mục ZIP không còn tồn tại.";
+                var parent = Path.GetDirectoryName(path);
+                dir = parent != null && Directory.Exists(parent) ? parent : path;
+            }
+
+            if (!Directory.Exists(dir))
+            {
+                StatusMessage = "Thư mục kết quả (ZIP hoặc XML) không còn tồn tại.";
                 return;
             }
-            var psi = new ProcessStartInfo
-            {
-                FileName = dir,
-                UseShellExecute = true
-            };
-            Process.Start(psi);
+
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
         }
         catch (Exception ex)
         {
-            StatusMessage = "Không mở được thư mục ZIP: " + ex.Message;
+            StatusMessage = "Không mở được thư mục: " + ex.Message;
         }
     }
 
@@ -1782,10 +1964,17 @@ public partial class InvoiceListViewModel : ObservableObject
         CloseActionMenu();
         if (inv == null || CompanyId == null) return;
 
-        // 1. Nếu đã có XML local thì mở viewer ngay.
+        // 1. Nếu đã có XML local thì đánh dấu trạng thái và mở viewer ngay.
         var existingXmlPath = GetXmlPathForInvoice(inv);
         if (!string.IsNullOrEmpty(existingXmlPath) && File.Exists(existingXmlPath))
         {
+            // Khớp cả key legacy và key mới để icon trạng thái nhất quán hơn.
+            var xmlKey = GetXmlFileBaseName(inv);
+            if (!string.IsNullOrWhiteSpace(xmlKey))
+                _xmlStateByKey[xmlKey] = XmlDownloadState.Downloaded;
+            _xmlStateByKey[GetExportBaseName(inv)] = XmlDownloadState.Downloaded;
+            XmlStateRefreshTrigger++;
+
             OpenXmlViewer(existingXmlPath);
             StatusMessage = "Đã mở XML hóa đơn (file đã lưu).";
             return;
@@ -1817,6 +2006,7 @@ public partial class InvoiceListViewModel : ObservableObject
                     XmlStateRefreshTrigger++;
                 }
             });
+            string? scoWarningMessage = null;
             try
             {
                 var result = await _invoiceSyncService.DownloadInvoicesXmlAsync(CompanyId.Value, list, folder, progress).ConfigureAwait(true);
@@ -1825,6 +2015,7 @@ public partial class InvoiceListViewModel : ObservableObject
                     StatusMessage = "Lỗi tải XML: " + (result.Message ?? "Không xác định.");
                     return;
                 }
+                scoWarningMessage = result.Message;
             }
             catch (Exception ex)
             {
@@ -1836,17 +2027,72 @@ public partial class InvoiceListViewModel : ObservableObject
             var xmlPath = GetXmlPathForInvoice(inv);
             if (!string.IsNullOrEmpty(xmlPath) && File.Exists(xmlPath))
             {
-                var key = GetExportBaseName(inv);
-                _xmlStateByKey[key] = XmlDownloadState.Downloaded;
+                var xmlKey = GetXmlFileBaseName(inv);
+                if (!string.IsNullOrWhiteSpace(xmlKey))
+                    _xmlStateByKey[xmlKey] = XmlDownloadState.Downloaded;
+                _xmlStateByKey[GetExportBaseName(inv)] = XmlDownloadState.Downloaded;
                 XmlStateRefreshTrigger++;
 
                 ClearRowActionBusyOnUi();
                 OpenXmlViewer(xmlPath);
                 StatusMessage = "Đã tải và mở cửa sổ xem XML.";
+                if (!string.IsNullOrWhiteSpace(scoWarningMessage))
+                    StatusMessage += Environment.NewLine + scoWarningMessage;
             }
             else
             {
-                StatusMessage = "Đã tải nhưng không tìm thấy file XML (kiểm tra thư mục ExportXml).";
+                // Trường hợp đã tải xong nhưng vẫn không dò được đúng file (do thay đổi cấu trúc/tên file),
+                // thử tải lại 1 lần trước khi báo lỗi.
+                var xmlKey = GetXmlFileBaseName(inv);
+                if (!string.IsNullOrWhiteSpace(xmlKey) &&
+                    _xmlStateByKey.TryGetValue(xmlKey, out var state) &&
+                    state == XmlDownloadState.NoXml)
+                {
+                    StatusMessage = "Không tồn tại XML cho hóa đơn này.";
+                    return;
+                }
+
+                StatusMessage = "Đã tải nhưng chưa tìm thấy file XML theo cấu trúc mới; đang thử tải lại...";
+                try
+                {
+                    var retryResult = await _invoiceSyncService
+                        .DownloadInvoicesXmlAsync(CompanyId.Value, list, folder, progress)
+                        .ConfigureAwait(true);
+                    if (!retryResult.Success)
+                    {
+                        StatusMessage = "Lỗi tải XML (lần 2): " + (retryResult.Message ?? "Không xác định.");
+                        return;
+                    }
+                    if (!string.IsNullOrWhiteSpace(retryResult.Message))
+                        scoWarningMessage = retryResult.Message;
+                }
+                catch (Exception ex)
+                {
+                    StatusMessage = "Lỗi tải XML (lần 2): " + ex.Message;
+                    return;
+                }
+
+                var xmlPath2 = GetXmlPathForInvoice(inv);
+                if (!string.IsNullOrEmpty(xmlPath2) && File.Exists(xmlPath2))
+                {
+                    var xmlKey2 = GetXmlFileBaseName(inv);
+                    if (!string.IsNullOrWhiteSpace(xmlKey2))
+                        _xmlStateByKey[xmlKey2] = XmlDownloadState.Downloaded;
+                    _xmlStateByKey[GetExportBaseName(inv)] = XmlDownloadState.Downloaded;
+                    XmlStateRefreshTrigger++;
+
+                    ClearRowActionBusyOnUi();
+                    OpenXmlViewer(xmlPath2);
+                    StatusMessage = "Đã tải lại và mở cửa sổ xem XML.";
+                    if (!string.IsNullOrWhiteSpace(scoWarningMessage))
+                        StatusMessage += Environment.NewLine + scoWarningMessage;
+                }
+                else
+                {
+                    StatusMessage = "Tải XML xong nhưng vẫn không tìm thấy file. Vui lòng kiểm tra thư mục lưu XML.";
+                    if (!string.IsNullOrWhiteSpace(scoWarningMessage))
+                        StatusMessage += Environment.NewLine + scoWarningMessage;
+                }
             }
         }
         finally
@@ -1932,33 +2178,88 @@ public partial class InvoiceListViewModel : ObservableObject
         System.Windows.Application.Current?.Dispatcher.Invoke(DispatcherPriority.Loaded, new Action(() => { }));
     }
 
-    /// <summary>Tìm file XML tương ứng với hóa đơn (nếu đã được tải về). Service lưu vào ExportXml\yyyy_MM\baseName\ hoặc ExportXml\yyyy_MM\baseName.xml.</summary>
+    /// <summary>Tìm file XML tương ứng với hóa đơn (nếu đã được tải về).</summary>
     private string? GetXmlPathForInvoice(InvoiceDisplayDto inv)
     {
-        var key = GetExportBaseName(inv);
         var monthFolderName = (inv.NgayLap ?? DateTime.Now).ToString("yyyy_MM");
         var monthFolder = Path.Combine(ExportXmlFolderPath, monthFolderName);
 
-        // 1) Thư mục theo tháng + tên hóa đơn (ZIP giải nén ra thư mục con)
-        var subDir = Path.Combine(monthFolder, key);
+        // Service lưu XML theo tên file:
+        // - "{SoHoaDon}_{KyHieuSanitized}.xml" trong: ExportXmlFolderPath\yyyy_MM\
+        // (giữ fallback cho cấu trúc legacy)
+        var xmlBaseName = GetXmlFileBaseName(inv);
+        if (!string.IsNullOrWhiteSpace(xmlBaseName))
+        {
+            // 1) File XML trực tiếp trong tháng (đúng theo service hiện tại)
+            var newMonthXmlPath = Path.Combine(monthFolder, xmlBaseName + ".xml");
+            if (File.Exists(newMonthXmlPath)) return newMonthXmlPath;
+
+            // 2) Một số phiên bản cũ có thể giải nén ra thư mục con tên baseName
+            var newSubDir = Path.Combine(monthFolder, xmlBaseName);
+            if (Directory.Exists(newSubDir))
+            {
+                var xml = Directory.GetFiles(newSubDir, "*.xml", SearchOption.AllDirectories).FirstOrDefault();
+                if (xml != null) return xml;
+            }
+        }
+
+        // Legacy: "{KyHieu-SOHD}".
+        var legacyKey = GetExportBaseName(inv);
+
+        // 3) Thư mục theo tháng + tên hóa đơn (ZIP giải nén ra thư mục con)
+        var subDir = Path.Combine(monthFolder, legacyKey);
         if (Directory.Exists(subDir))
         {
             var xml = Directory.GetFiles(subDir, "*.xml", SearchOption.AllDirectories).FirstOrDefault();
             if (xml != null) return xml;
         }
-        // 2) File XML trực tiếp trong tháng: yyyy_MM\key.xml
-        var monthXmlPath = Path.Combine(monthFolder, key + ".xml");
-        if (File.Exists(monthXmlPath)) return monthXmlPath;
 
-        // 3) Cấu trúc cũ: ngay dưới ExportXml (không có thư mục tháng)
-        var legacySubDir = Path.Combine(ExportXmlFolderPath, key);
+        // 4) File XML trực tiếp trong tháng (legacy): yyyy_MM\legacyKey.xml
+        var monthLegacyXmlPath = Path.Combine(monthFolder, legacyKey + ".xml");
+        if (File.Exists(monthLegacyXmlPath)) return monthLegacyXmlPath;
+
+        // 5) Cấu trúc cũ: ngay dưới ExportXml (không có thư mục tháng)
+        var legacySubDir = Path.Combine(ExportXmlFolderPath, legacyKey);
         if (Directory.Exists(legacySubDir))
         {
             var xml = Directory.GetFiles(legacySubDir, "*.xml", SearchOption.AllDirectories).FirstOrDefault();
             if (xml != null) return xml;
         }
-        var directPath = Path.Combine(ExportXmlFolderPath, key + ".xml");
-        return File.Exists(directPath) ? directPath : null;
+
+        // 6) Fallback: file trực tiếp ngay dưới ExportXml (không có thư mục tháng)
+        var directLegacyPath = Path.Combine(ExportXmlFolderPath, legacyKey + ".xml");
+        if (File.Exists(directLegacyPath)) return directLegacyPath;
+
+        // 7) Fallback cho key mới nếu cấu trúc legacy cũng được lưu không có thư mục tháng.
+        if (!string.IsNullOrWhiteSpace(xmlBaseName))
+        {
+            var directNewPath = Path.Combine(ExportXmlFolderPath, xmlBaseName + ".xml");
+            if (File.Exists(directNewPath)) return directNewPath;
+        }
+
+        // 8) Job nền / service cũ: XML lưu tại ...\{Công ty}\yyyy_MM\ (cạnh thư mục XML\, không vào XML\).
+        try
+        {
+            var companyDir = Directory.GetParent(ExportXmlFolderPath)?.FullName;
+            if (!string.IsNullOrEmpty(companyDir))
+            {
+                var wrongRootMonth = Path.Combine(companyDir, monthFolderName);
+                if (!string.IsNullOrWhiteSpace(xmlBaseName))
+                {
+                    var misPath = Path.Combine(wrongRootMonth, xmlBaseName + ".xml");
+                    if (File.Exists(misPath)) return misPath;
+                }
+
+                var misLegacy = Path.Combine(wrongRootMonth, legacyKey + ".xml");
+                if (File.Exists(misLegacy)) return misLegacy;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return null;
     }
 
     /// <summary>Mở cửa sổ xem XML với nội dung đã được format.</summary>
@@ -2027,6 +2328,7 @@ public partial class InvoiceListViewModel : ObservableObject
                 LookupSearchUrl = "https://tracuunnt.gdt.gov.vn";
                 LookupSecretCode = string.IsNullOrWhiteSpace(inv.MaHoaDon) ? null : inv.MaHoaDon.Trim();
                 LookupSellerTaxCode = inv.NbMst;
+                LookupProviderTaxCode = null;
                 IsHtInvoiceLookup = false;
                 IsLookupPopupOpen = true;
                 StatusMessage = "Chưa có cấu hình gợi ý tra cứu cho hóa đơn này.";
@@ -2038,6 +2340,7 @@ public partial class InvoiceListViewModel : ObservableObject
             LookupSearchUrl = suggestion.SearchUrl;
             LookupSecretCode = !string.IsNullOrWhiteSpace(suggestion.SecretCode) ? suggestion.SecretCode.Trim() : (string.IsNullOrWhiteSpace(inv.MaHoaDon) ? null : inv.MaHoaDon.Trim());
             LookupSellerTaxCode = suggestion.SellerTaxCode;
+            LookupProviderTaxCode = suggestion.ProviderTaxCode;
             IsHtInvoiceLookup = IsHtInvoiceProviderKey(suggestion.ProviderKey);
             IsLookupPopupOpen = true;
             StatusMessage = "Đã lấy thông tin gợi ý tra cứu.";
@@ -2095,22 +2398,29 @@ public partial class InvoiceListViewModel : ObservableObject
 
     /// <summary>
     /// Trạng thái XML cho một hóa đơn: None (chưa tải), Downloaded (✓), NoXml (✗).
-    /// Ưu tiên kiểm tra thực tế trên ổ đĩa cho trạng thái Downloaded; dùng XmlStatus==2 để nhận biết &quot;không có XML&quot;.
+    /// Ưu tiên kiểm tra thực tế trên ổ đĩa (theo cấu trúc mới Documents\SmartInvoice\{Company}\XML\yyyy_MM\SoHoaDon_KyHieu.xml);
+    /// dùng XmlStatus==2 để nhận biết "không có XML".
     /// </summary>
     public XmlDownloadState GetXmlState(InvoiceDisplayDto inv)
     {
-        var key = GetExportBaseName(inv);
-        var subDir = Path.Combine(ExportXmlFolderPath, key);
-        if (Directory.Exists(subDir) && Directory.GetFileSystemEntries(subDir).Length > 0)
-            return XmlDownloadState.Downloaded;
-        if (File.Exists(Path.Combine(ExportXmlFolderPath, key + ".xml")))
+        var legacyKey = GetExportBaseName(inv);
+        var xmlKey = GetXmlFileBaseName(inv);
+
+        // 1. Kiểm tra thực tế trên đĩa bằng helper GetXmlPathForInvoice (đã hỗ trợ cả cấu trúc cũ và mới).
+        var xmlPath = GetXmlPathForInvoice(inv);
+        if (!string.IsNullOrEmpty(xmlPath) && File.Exists(xmlPath))
             return XmlDownloadState.Downloaded;
 
-        // Backend đã xác nhận không có XML cho hóa đơn này.
+        // 2. Backend đã xác nhận không có XML cho hóa đơn này.
         if (inv.XmlStatus == 2)
             return XmlDownloadState.NoXml;
-        if (_xmlStateByKey.TryGetValue(key, out var state))
+
+        // 3. Trạng thái tạm thời cập nhật trong phiên (khi vừa tải xong).
+        if (!string.IsNullOrWhiteSpace(xmlKey) && _xmlStateByKey.TryGetValue(xmlKey, out var state))
             return state;
+        if (_xmlStateByKey.TryGetValue(legacyKey, out state))
+            return state;
+
         return XmlDownloadState.None;
     }
 
@@ -2120,6 +2430,26 @@ public partial class InvoiceListViewModel : ObservableObject
         foreach (var c in Path.GetInvalidFileNameChars())
             kh = kh.Replace(c, '_');
         return $"{kh}-{inv.SoHoaDon}";
+    }
+
+    /// <summary>
+    /// Quy ước tên file XML hiện tại theo service:
+    /// baseName = "{SoHoaDon}_{SanitizeFileName(KyHieu)}"
+    /// </summary>
+    private static string? GetXmlFileBaseName(InvoiceDisplayDto inv)
+    {
+        if (inv == null) return null;
+        var khhdon = inv.KyHieu?.Trim();
+        if (string.IsNullOrWhiteSpace(khhdon)) return null;
+
+        // Khi SoHoaDon không hợp lệ thì không thể dò được tên file.
+        if (inv.SoHoaDon <= 0) return null;
+
+        // Sanitize giống với service.
+        foreach (var c in Path.GetInvalidFileNameChars())
+            khhdon = khhdon.Replace(c, '_');
+        khhdon = khhdon.Trim();
+        return $"{inv.SoHoaDon}_{khhdon}";
     }
 
     /// <summary>Thư mục PDF cho công ty hiện tại (Documents\SmartInvoice\{CompanyCodeOrName}\Pdf).</summary>

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
 using SmartInvoice.Application.Services;
+using SmartInvoice.Application.Services.InvoicePayloadParsing;
 
 namespace SmartInvoice.InvoicePdfFetchers;
 
@@ -12,6 +13,7 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// Hiện tại ưu tiên dùng cổng E-Invoice với Mã nhận hóa đơn (MaNhanHoaDon).
 /// Trong tương lai có thể bổ sung các cách khác (ví dụ QRCODE) theo thứ tự ưu tiên.
 /// </summary>
+[InvoiceProvider("0101300842", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
 public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
     /// <summary>Mã số thuế nhà cung cấp dịch vụ hóa đơn (E-Invoice).</summary>
@@ -62,7 +64,7 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
         }
 
         // Ưu tiên 2: cổng E-Invoice với Mã nhận hóa đơn.
-        var (searchUrl, maNhanHoaDon) = GetSearchUrlAndCodeFromPayload(payloadJson);
+        var (searchUrl, maNhanHoaDon) = EinvoiceTraCuuParsing.GetSearchUrlAndCodeFromPayload(payloadJson);
         if (string.IsNullOrWhiteSpace(maNhanHoaDon))
         {
             _logger.LogWarning("Einvoice PDF: payload không có Mã TC trong cttkhac.");
@@ -545,94 +547,6 @@ public sealed class EinvoiceInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             rest = rest[..spaceIdx];
 
         return rest;
-    }
-
-    /// <summary>Lấy DC TC (URL tra cứu) và Mã TC (Mã nhận hóa đơn) từ cttkhac/ttkhac hoặc trường gốc payload.</summary>
-    private static (string? SearchUrl, string? MaNhanHoaDon) GetSearchUrlAndCodeFromPayload(string payloadJson)
-    {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            var root = doc.RootElement;
-            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-
-            string? dcTc = null;
-            string? maTc = null;
-
-            static string NormalizeLabel(string? s)
-            {
-                if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-                // Chuẩn hóa: lowercase + bỏ dấu + bỏ khoảng trắng/ký tự không phải chữ/số.
-                var lower = s.ToLowerInvariant().Normalize(System.Text.NormalizationForm.FormD);
-                var sb = new System.Text.StringBuilder(lower.Length);
-                foreach (var ch in lower)
-                {
-                    var uc = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
-                    if (uc == System.Globalization.UnicodeCategory.NonSpacingMark)
-                        continue; // bỏ dấu
-                    if (char.IsLetterOrDigit(ch))
-                        sb.Append(ch);
-                }
-                return sb.ToString();
-            }
-
-            static void ScanArrayForDcTcAndMaTc(JsonElement arr, ref string? dcTcRef, ref string? maTcRef)
-            {
-                foreach (var item in arr.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-                    var ttruong = item.TryGetProperty("ttruong", out var tt) ? tt.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(ttruong)) continue;
-
-                    var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                        : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                    var value = string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
-
-                    var norm = NormalizeLabel(ttruong); // ví dụ "DC TC" → "dctc", "Mã TC" → "matc"
-                    if (dcTcRef == null && (norm == "dctc" || norm.Contains("diachitracuu")))
-                        dcTcRef = value;
-                    else if (maTcRef == null && (norm == "matc" || norm.Contains("matracuu") || norm.Contains("manhanhoadon")))
-                        maTcRef = value;
-
-                    if (dcTcRef != null && maTcRef != null)
-                        break;
-                }
-            }
-
-            // 1) cttkhac
-            if (r.TryGetProperty("cttkhac", out var arr) && arr.ValueKind == JsonValueKind.Array)
-            {
-                ScanArrayForDcTcAndMaTc(arr, ref dcTc, ref maTc);
-            }
-
-            // 2) ttkhac – một số payload có thể đặt DC TC / Mã TC ở đây
-            if ((dcTc == null || maTc == null) && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
-            {
-                ScanArrayForDcTcAndMaTc(ttkhac, ref dcTc, ref maTc);
-            }
-
-            // Fallback: đọc từ trường gốc payload (một số API trả mã tra cứu ở root)
-            if (string.IsNullOrWhiteSpace(maTc))
-            {
-                maTc = GetStr(r, "maNhanHoaDon") ?? GetStr(r, "MaNhanHoaDon")
-                    ?? GetStr(r, "matracuu") ?? GetStr(r, "MaTraCuu")
-                    ?? GetStr(r, "maTc") ?? GetStr(r, "MaTC");
-            }
-
-            return (dcTc, maTc);
-        }
-        catch
-        {
-            return (null, null);
-        }
-    }
-
-    private static string? GetStr(JsonElement el, string propName)
-    {
-        if (el.ValueKind != JsonValueKind.Object || !el.TryGetProperty(propName, out var p)) return null;
-        var s = p.GetString();
-        return string.IsNullOrWhiteSpace(s) ? null : s.Trim();
     }
 }
 

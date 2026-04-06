@@ -4,8 +4,10 @@
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         xmlns:converters="clr-namespace:SmartInvoice.Modules.Companies.Converters"
         xmlns:domain="clr-namespace:SmartInvoice.Core.Domain;assembly=SmartInvoice.Core"
+        Language="vi-VN"
         Title="Quản lý chạy tự động"
-        Width="1100" Height="680" MinWidth="800" MinHeight="520"
+        Width="1100" Height="680"         MinWidth="800" MinHeight="520"
+        ResizeMode="CanResize"
         WindowStartupLocation="CenterOwner"
         ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica">
     <Window.Resources>
@@ -28,13 +30,14 @@
         </DataTemplate>
     </Window.Resources>
     <Grid>
-        <ui:TitleBar Title="Quản lý chạy tự động" ShowMaximize="False" ShowMinimize="False" />
+        <ui:TitleBar Title="Quản lý chạy tự động" ShowMaximize="True" ShowMinimize="False" />
 
         <Grid Margin="20,48,20,20">
+            <!-- Hàng 1–2: tỉ lệ cố định (2:1) theo cửa sổ — không co giãn theo nội dung job/chi tiết (tránh giật layout) -->
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" MinHeight="140" />
+                <RowDefinition Height="2*" MinHeight="180" />
+                <RowDefinition Height="*" MinHeight="160" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
@@ -42,9 +45,9 @@
                        FontSize="15" FontWeight="Bold"
                        Foreground="{DynamicResource SiTextPrimary}" Margin="0,0,0,12" />
 
-            <Grid Grid.Row="1">
+            <Grid Grid.Row="1" MinHeight="0">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
+                    <RowDefinition Height="*" MinHeight="0" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
             <DataGrid Grid.Row="0" x:Name="JobsGrid"
@@ -53,7 +56,10 @@
                       AutoGenerateColumns="False" IsReadOnly="True"
                       CanUserAddRows="False" CanUserDeleteRows="False"
                       SelectionMode="Single" GridLinesVisibility="Horizontal"
-                      HeadersVisibility="Column" Margin="0,0,0,8">
+                      HeadersVisibility="Column"
+                      Margin="0,0,0,8"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Auto">
                 <DataGrid.RowStyle>
                     <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                         <Style.Triggers>
@@ -93,43 +99,65 @@
                 </Border>
             </Grid>
 
-            <Border Grid.Row="2" Padding="12" Margin="0,0,0,12"
+            <!-- Chiếm một phần chiều cao cố định theo tỉ lệ Grid; nội dung dài chỉ cuộn bên trong -->
+            <Border Grid.Row="2" Padding="12" Margin="0,0,0,12" MinHeight="0"
                     Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
                     BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
                     BorderThickness="1" CornerRadius="4">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="Báo cáo chi tiết job đang chọn" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="Mô tả: " FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding SelectedJob.Description, FallbackValue='—'}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalAlignment="Stretch"
+                              Padding="0">
+                    <StackPanel>
+                        <TextBlock Text="Báo cáo chi tiết job đang chọn" FontWeight="SemiBold" Margin="0,0,0,8" />
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Mô tả: " FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="1" Text="{Binding SelectedJob.Description, FallbackValue='—'}"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" />
+                        </Grid>
+                        <TextBlock Text="{Binding SelectedJob.ReportSummary, FallbackValue='—'}"
+                                   TextWrapping="Wrap" Margin="0,0,0,8" />
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="File kết quả (ZIP/XML/Excel): " FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="1" Text="{Binding SelectedJob.ResultPath, FallbackValue='—'}"
+                                       TextWrapping="Wrap" VerticalAlignment="Top"
+                                       ToolTip="{Binding SelectedJob.ResultPath}" />
+                        </Grid>
+                        <WrapPanel Margin="0,0,0,8" Orientation="Horizontal">
+                            <TextBlock FontWeight="SemiBold" Text="Tạo lúc: " VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding SelectedJob.CreatedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', FallbackValue='—'}" VerticalAlignment="Center" Margin="0,0,16,4" />
+                            <TextBlock FontWeight="SemiBold" Text="Bắt đầu: " VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding SelectedJob.StartedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', TargetNullValue='—', FallbackValue='—'}" VerticalAlignment="Center" Margin="0,0,16,4" />
+                            <TextBlock FontWeight="SemiBold" Text="Kết thúc: " VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding SelectedJob.FinishedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', TargetNullValue='—', FallbackValue='—'}" VerticalAlignment="Center" Margin="0,0,0,4" />
+                        </WrapPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Lỗi: " FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,0,8,0" />
+                            <Border Grid.Column="1"
+                                    Background="#10FF0000"
+                                    BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="8,6"
+                                    MinHeight="48">
+                                <TextBlock Text="{Binding SelectedJob.LastError, TargetNullValue='-', FallbackValue='-'}"
+                                           TextWrapping="Wrap" />
+                            </Border>
+                        </Grid>
                     </StackPanel>
-                    <TextBlock Grid.Row="2" Text="{Binding SelectedJob.ReportSummary, FallbackValue='—'}"
-                               TextWrapping="Wrap" Margin="0,4,0,4" VerticalAlignment="Top" />
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="File kết quả (ZIP/XML/Excel): " FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding SelectedJob.ResultPath, FallbackValue='—'}" TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="380" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedJob.ResultPath}" />
-                    </StackPanel>
-                    <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="Tạo lúc: " FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding SelectedJob.CreatedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', FallbackValue='—'}" VerticalAlignment="Center" />
-                        <TextBlock Text="   Bắt đầu: " FontWeight="SemiBold" VerticalAlignment="Center" Margin="12,0,0,0" />
-                        <TextBlock Text="{Binding SelectedJob.StartedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', TargetNullValue='—', FallbackValue='—'}" VerticalAlignment="Center" />
-                        <TextBlock Text="   Kết thúc: " FontWeight="SemiBold" VerticalAlignment="Center" Margin="12,0,0,0" />
-                        <TextBlock Text="{Binding SelectedJob.FinishedAt, StringFormat='{}{0:dd/MM/yyyy HH:mm}', TargetNullValue='—', FallbackValue='—'}" VerticalAlignment="Center" />
-                    </StackPanel>
-                    <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="Lỗi: " FontWeight="SemiBold" VerticalAlignment="Top" />
-                        <TextBlock Text="{Binding SelectedJob.LastError, FallbackValue='—'}" TextWrapping="Wrap" VerticalAlignment="Top" MaxHeight="36" />
-                    </StackPanel>
-                </Grid>
+                </ScrollViewer>
             </Border>
 
             <Grid Grid.Row="3">
@@ -144,6 +172,15 @@
                                Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
                     <ui:Button Content="Làm mới" Command="{Binding RefreshCommand}"
                                Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                    <ui:Button Content="Lại chi tiết lỗi" Command="{Binding RetryFailedDetailCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0"
+                               ToolTip="Tạo job mới chỉ gọi API chi tiết cho hóa đơn thất bại / thiếu dữ liệu" />
+                    <ui:Button Content="Lại XML lỗi" Command="{Binding RetryFailedXmlCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0"
+                               ToolTip="Tạo job tải lại XML cho hóa đơn lỗi (không tính trường hợp không có XML)" />
+                    <ui:Button Content="Lại PDF lỗi" Command="{Binding RetryFailedPdfCommand}"
+                               Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0"
+                               ToolTip="Tạo job tải lại PDF cho hóa đơn lỗi (job PDF hàng loạt)" />
                     <ui:Button Content="Thử lại (job lỗi)" Command="{Binding RetryCommand}"
                                Appearance="Secondary" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
                     <ui:Button Content="Hủy (job chờ)" Command="{Binding CancelCommand}"

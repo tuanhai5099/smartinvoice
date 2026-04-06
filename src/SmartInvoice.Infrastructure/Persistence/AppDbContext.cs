@@ -44,6 +44,8 @@ public class AppDbContext : DbContext
             e.Property(x => x.MstMua).HasMaxLength(32);
             e.Property(x => x.Dvtte).HasMaxLength(16);
             e.Property(x => x.XmlBaseName).HasMaxLength(128);
+            e.Property(x => x.ProviderTaxCode).HasMaxLength(32);
+            e.Property(x => x.TvanTaxCode).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.ExternalId }).IsUnique();
         });
 
@@ -55,6 +57,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.ResultPath).HasMaxLength(2048);
             e.Property(x => x.ExportKey).HasMaxLength(64);
             e.Property(x => x.PayloadJson).HasMaxLength(8192);
+            e.Property(x => x.FailureSummaryJson);
             e.Property(x => x.Type).HasConversion<int>();
             e.Property(x => x.Status).HasConversion<int>();
             e.HasIndex(x => new { x.Status, x.CreatedAt });

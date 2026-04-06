@@ -10,7 +10,7 @@ using SmartInvoice.Core.Repositories;
 namespace SmartInvoice.Infrastructure.Services;
 
 /// <summary>
-/// Lấy HTML xem hóa đơn: gọi API detail, fill template C26TAA-31 (token), ghi file vào thư mục tạm, trả về đường dẫn file.
+/// L\u1EA5y HTML xem h\u00F3a \u0111\u01A1n: g\u1ECDi API detail, fill template C26TAA-31 (token), ghi file v\u00E0o th\u01B0 m\u1EE5c t\u1EA1m, tr\u1EA3 v\u1EC1 \u0111\u01B0\u1EDDng d\u1EABn file.
 /// </summary>
 public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
 {
@@ -21,6 +21,9 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
     private const string TemplateDetailsJsResource = "SmartInvoice.Application.Assets.InvoiceTemplate.details.js";
     private const string ImageViewInvoiceBgResource = "SmartInvoice.Application.Assets.InvoiceTemplate.viewinvoice-bg.jpg";
     private const string ImageSignCheckResource = "SmartInvoice.Application.Assets.InvoiceTemplate.sign-check.jpg";
+
+    private const string ScoUnavailableUserMessage =
+        "Hi\u1EC7n t\u1EA1i h\u1EC7 th\u1ED1ng h\u00F3a \u0111\u01A1n \u0111i\u1EC7n t\u1EED kh\u00F4ng l\u1EA5y \u0111\u01B0\u1EE3c h\u00F3a \u0111\u01A1n t\u1EEB m\u00E1y t\u00EDnh ti\u1EC1n (SCO).";
 
     private readonly IUnitOfWork _uow;
     private readonly IHoaDonDienTuApiClient _apiClient;
@@ -43,35 +46,40 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
     {
         var company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (company == null)
-            return (null, "Công ty không tồn tại.");
+            return (null, "C\u00F4ng ty kh\u00F4ng t\u1ED3n t\u1EA1i.");
         var tokenValid = await _companyService.EnsureValidTokenAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (!tokenValid)
-            return (null, "Token hết hạn. Vui lòng đăng nhập lại công ty.");
+            return (null, "Token h\u1EBFt h\u1EA1n. Vui l\u00F2ng \u0111\u0103ng nh\u1EADp l\u1EA1i c\u00F4ng ty.");
         company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (company?.AccessToken == null)
-            return (null, "Không có token truy cập.");
+            return (null, "Kh\u00F4ng c\u00F3 token truy c\u1EADp.");
 
         var nbmst = inv.NbMst ?? company.TaxCode ?? company.Username ?? "";
         var khhdon = inv.KyHieu ?? "";
         if (string.IsNullOrEmpty(nbmst) || string.IsNullOrEmpty(khhdon))
-            return (null, "Thiếu MST hoặc ký hiệu hóa đơn.");
+            return (null, "Thi\u1EBFu MST ho\u1EB7c k\u00FD hi\u1EC7u h\u00F3a \u0111\u01A1n.");
 
         try
         {
             var existing = await _uow.Invoices.GetByExternalIdAsync(companyId, inv.Id, cancellationToken).ConfigureAwait(false);
             var masterJson = existing?.PayloadJson;
 
-            // Luôn gọi API detail để lấy đủ chi tiết, nhưng KHÔNG ghi đè PayloadJson (giữ nguyên JSON tổng).
-            var detailJson = await _apiClient.GetInvoiceDetailJsonAsync(
+            // API detail: try sco-query / query order, flip endpoint on failure (avoids wrong-URL 500).
+            var detailJson = await TryGetInvoiceDetailJsonWithFallbackAsync(
                 company.AccessToken,
                 nbmst,
                 khhdon,
                 inv.SoHoaDon,
                 inv.Khmshdon,
-                fromSco: inv.MayTinhTien,
+                inv.MayTinhTien,
                 cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(detailJson) && PayloadJsonMayServeAsDetail(masterJson))
+            {
+                detailJson = masterJson;
+                _logger.LogInformation("View invoice: using cached PayloadJson when API detail empty/failed for {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+            }
             if (string.IsNullOrWhiteSpace(detailJson))
-                return (null, "API không trả về dữ liệu chi tiết.");
+                return (null, "API kh\u00F4ng tr\u1EA3 v\u1EC1 d\u1EEF li\u1EC7u chi ti\u1EBFt.");
             if (existing != null)
             {
                 existing.LineItemsJson = ExtractLineItemsJson(detailJson);
@@ -84,7 +92,7 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
             var templateResource = mauSo.StartsWith("06", StringComparison.Ordinal) ? TemplateInvoiceMau06Resource : TemplateInvoiceResource;
             var templateHtml = await LoadEmbeddedTemplateAsync(templateResource).ConfigureAwait(false);
             if (string.IsNullOrEmpty(templateHtml))
-                return (null, "Không đọc được template hóa đơn.");
+                return (null, "Kh\u00F4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c template h\u00F3a \u0111\u01A1n.");
             var filledHtml = InvoiceTemplateTokenReplacer.Fill(templateHtml, masterJson, detailJson);
 
             var tempDir = Path.Combine(Path.GetTempPath(), "SmartInvoice_InvoiceView", Guid.NewGuid().ToString("N")[..8]);
@@ -98,10 +106,15 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
             await CopyEmbeddedResourceToFileAsync(ImageSignCheckResource, Path.Combine(tempDir, "sign-check.jpg"), cancellationToken).ConfigureAwait(false);
             return (invoicePath, null);
         }
+        catch (OperationCanceledException ex) when (inv.MayTinhTien && !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "SCO detail timeout for {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+            return (null, ScoUnavailableUserMessage);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Get invoice detail failed for {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
-            return (null, "Lỗi lấy chi tiết: " + ex.Message);
+            return (null, "L\u1ED7i l\u1EA5y chi ti\u1EBFt: " + ex.Message);
         }
     }
 
@@ -109,35 +122,39 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
     {
         var company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (company == null)
-            return (null, "Công ty không tồn tại.");
+            return (null, "C\u00F4ng ty kh\u00F4ng t\u1ED3n t\u1EA1i.");
         var tokenValid = await _companyService.EnsureValidTokenAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (!tokenValid)
-            return (null, "Token hết hạn. Vui lòng đăng nhập lại công ty.");
+            return (null, "Token h\u1EBFt h\u1EA1n. Vui l\u00F2ng \u0111\u0103ng nh\u1EADp l\u1EA1i c\u00F4ng ty.");
         company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (company?.AccessToken == null)
-            return (null, "Không có token truy cập.");
+            return (null, "Kh\u00F4ng c\u00F3 token truy c\u1EADp.");
 
         var nbmst = inv.NbMst ?? company.TaxCode ?? company.Username ?? "";
         var khhdon = inv.KyHieu ?? "";
         if (string.IsNullOrEmpty(nbmst) || string.IsNullOrEmpty(khhdon))
-            return (null, "Thiếu MST hoặc ký hiệu hóa đơn.");
+            return (null, "Thi\u1EBFu MST ho\u1EB7c k\u00FD hi\u1EC7u h\u00F3a \u0111\u01A1n.");
 
         try
         {
             var existing = await _uow.Invoices.GetByExternalIdAsync(companyId, inv.Id, cancellationToken).ConfigureAwait(false);
             var masterJson = existing?.PayloadJson;
 
-            // Luôn gọi API detail để lấy đủ chi tiết, nhưng giữ nguyên PayloadJson tổng.
-            var detailJson = await _apiClient.GetInvoiceDetailJsonAsync(
+            var detailJson = await TryGetInvoiceDetailJsonWithFallbackAsync(
                 company.AccessToken,
                 nbmst,
                 khhdon,
                 inv.SoHoaDon,
                 inv.Khmshdon,
-                fromSco: inv.MayTinhTien,
+                inv.MayTinhTien,
                 cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(detailJson) && PayloadJsonMayServeAsDetail(masterJson))
+            {
+                detailJson = masterJson;
+                _logger.LogInformation("Print invoice: using cached PayloadJson when API detail empty/failed for {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+            }
             if (string.IsNullOrWhiteSpace(detailJson))
-                return (null, "API không trả về dữ liệu chi tiết.");
+                return (null, "API kh\u00F4ng tr\u1EA3 v\u1EC1 d\u1EEF li\u1EC7u chi ti\u1EBFt.");
             if (existing != null)
             {
                 existing.LineItemsJson = ExtractLineItemsJson(detailJson);
@@ -150,7 +167,7 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
             var templateResource = mauSo.StartsWith("06", StringComparison.Ordinal) ? TemplatePrintInvoiceMau06Resource : TemplatePrintInvoiceResource;
             var templateHtml = await LoadEmbeddedTemplateAsync(templateResource).ConfigureAwait(false);
             if (string.IsNullOrEmpty(templateHtml))
-                return (null, "Không đọc được template in hóa đơn.");
+                return (null, "Kh\u00F4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c template in h\u00F3a \u0111\u01A1n.");
             var filledHtml = InvoiceTemplateTokenReplacer.Fill(templateHtml, masterJson, detailJson);
 
             var tempDir = Path.Combine(Path.GetTempPath(), "SmartInvoice_InvoicePrint", Guid.NewGuid().ToString("N")[..8]);
@@ -166,10 +183,15 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
 
             return (printPath, null);
         }
+        catch (OperationCanceledException ex) when (inv.MayTinhTien && !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "SCO detail timeout for print {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+            return (null, ScoUnavailableUserMessage);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Get invoice print HTML failed for {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
-            // Lỗi dữ liệu/template: trả về trang HTML lỗi để in thay vì chỉ toast
+            // L\u1ED7i d\u1EEF li\u1EC7u/template: tr\u1EA3 v\u1EC1 trang HTML l\u1ED7i \u0111\u1EC3 in thay v\u00EC ch\u1EC9 toast
             var isDataOrTemplateError = ex is JsonException or InvalidOperationException
                 || ex.Message.Contains("current state of the object", StringComparison.OrdinalIgnoreCase);
             if (isDataOrTemplateError)
@@ -184,10 +206,10 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
                 }
                 catch
                 {
-                    // Fallback: trả về lỗi dạng message
+                    // Fallback: tr\u1EA3 v\u1EC1 l\u1ED7i d\u1EA1ng message
                 }
             }
-            return (null, "Lỗi tạo trang in: " + ex.Message);
+            return (null, "L\u1ED7i t\u1EA1o trang in: " + ex.Message);
         }
     }
 
@@ -197,25 +219,25 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
 
         var company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (company == null)
-            return (empty, "Công ty không tồn tại.");
+            return (empty, "C\u00F4ng ty kh\u00F4ng t\u1ED3n t\u1EA1i.");
 
         var tokenValid = await _companyService.EnsureValidTokenAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (!tokenValid)
-            return (empty, "Token hết hạn. Vui lòng đăng nhập lại công ty.");
+            return (empty, "Token h\u1EBFt h\u1EA1n. Vui l\u00F2ng \u0111\u0103ng nh\u1EADp l\u1EA1i c\u00F4ng ty.");
 
         company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         if (company?.AccessToken == null)
-            return (empty, "Không có token truy cập.");
+            return (empty, "Kh\u00F4ng c\u00F3 token truy c\u1EADp.");
 
         var nbmst = inv.NbMst ?? company.TaxCode ?? company.Username ?? "";
         var khhdon = inv.KyHieu ?? "";
         if (string.IsNullOrWhiteSpace(nbmst) || string.IsNullOrWhiteSpace(khhdon))
-            return (empty, "Thiếu MST hoặc ký hiệu hóa đơn.");
+            return (empty, "Thi\u1EBFu MST ho\u1EB7c k\u00FD hi\u1EC7u h\u00F3a \u0111\u01A1n.");
 
         try
         {
             var trangThai = inv.TrangThaiDisplay ?? string.Empty;
-            var isAdjustment = trangThai.Contains("điều chỉnh", StringComparison.OrdinalIgnoreCase) ||
+            var isAdjustment = trangThai.Contains("\u0111i\u1EC1u ch\u1EC9nh", StringComparison.OrdinalIgnoreCase) ||
                                trangThai.Contains("dieu chinh", StringComparison.OrdinalIgnoreCase);
 
             var json = await _apiClient.GetInvoiceRelativeJsonAsync(
@@ -228,19 +250,19 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
                 cancellationToken).ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(json))
-                return (empty, "API không trả về dữ liệu hóa đơn liên quan.");
+                return (empty, "API kh\u00F4ng tr\u1EA3 v\u1EC1 d\u1EEF li\u1EC7u h\u00F3a \u0111\u01A1n li\u00EAn quan.");
 
             string? adjustmentDescription = null;
             if (isAdjustment)
             {
-                // Lấy thêm detail của hóa đơn điều chỉnh để dựng nội dung điều chỉnh (từ chi tiết hàng hóa).
-                var detailJson = await _apiClient.GetInvoiceDetailJsonAsync(
+                // L\u1EA5y th\u00EAm detail c\u1EE7a h\u00F3a \u0111\u01A1n \u0111i\u1EC1u ch\u1EC9nh \u0111\u1EC3 d\u1EF1ng n\u1ED9i dung \u0111i\u1EC1u ch\u1EC9nh (t\u1EEB chi ti\u1EBFt h\u00E0ng h\u00F3a).
+                var detailJson = await TryGetInvoiceDetailJsonWithFallbackAsync(
                     company.AccessToken,
                     nbmst,
                     khhdon,
                     inv.SoHoaDon,
                     inv.Khmshdon,
-                    fromSco: inv.MayTinhTien,
+                    inv.MayTinhTien,
                     cancellationToken).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(detailJson))
                 {
@@ -250,14 +272,78 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
 
             var items = ParseInvoiceRelativeItems(json, isAdjustment, adjustmentDescription);
             if (items.Count == 0)
-                return (empty, "Không có hóa đơn liên quan.");
+                return (empty, "Kh\u00F4ng c\u00F3 h\u00F3a \u0111\u01A1n li\u00EAn quan.");
 
             return (items, null);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Get invoice relative failed for {Khhdon}-{Shdon}", inv.KyHieu, inv.SoHoaDon);
-            return (empty, "Lỗi lấy hóa đơn liên quan: " + ex.Message);
+            return (empty, "L\u1ED7i l\u1EA5y h\u00F3a \u0111\u01A1n li\u00EAn quan: " + ex.Message);
+        }
+    }
+
+    private static bool PayloadJsonMayServeAsDetail(string? masterJson)
+    {
+        if (string.IsNullOrWhiteSpace(masterJson)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(masterJson);
+            var root = doc.RootElement;
+            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
+            if (r.ValueKind != JsonValueKind.Object) return false;
+            if (r.TryGetProperty("hdhhdvu", out var hd) && hd.ValueKind == JsonValueKind.Array && hd.GetArrayLength() > 0)
+                return true;
+        }
+        catch
+        {
+            // ignored
+        }
+        return false;
+    }
+
+    private async Task<string?> TryGetInvoiceDetailJsonWithFallbackAsync(
+        string accessToken,
+        string nbmst,
+        string khhdon,
+        int soHoaDon,
+        ushort khmshdon,
+        bool scoFirst,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var detailJson = await _apiClient
+                .GetInvoiceDetailJsonAsync(accessToken, nbmst, khhdon, soHoaDon, khmshdon, scoFirst, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(detailJson))
+                return detailJson;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // fallback l\u1EA7n 2
+        }
+        catch (Exception)
+        {
+            // fallback l\u1EA7n 2
+        }
+
+        try
+        {
+            var detailJson = await _apiClient
+                .GetInvoiceDetailJsonAsync(accessToken, nbmst, khhdon, soHoaDon, khmshdon, !scoFirst, cancellationToken)
+                .ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(detailJson) ? null : detailJson;
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Detail query timeout for invoice {Nbmst}-{Khhdon}-{Shdon}", nbmst, khhdon, soHoaDon);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Detail query failed for invoice {Nbmst}-{Khhdon}-{Shdon}", nbmst, khhdon, soHoaDon);
+            return null;
         }
     }
 
@@ -296,26 +382,26 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
         JsonElement arr;
         if (root.ValueKind == JsonValueKind.Array)
         {
-            // Trường hợp API trả về trực tiếp là một mảng các hóa đơn liên quan.
+            // Tr\u01B0\u1EDDng h\u1EE3p API tr\u1EA3 v\u1EC1 tr\u1EF1c ti\u1EBFp l\u00E0 m\u1ED9t m\u1EA3ng c\u00E1c h\u00F3a \u0111\u01A1n li\u00EAn quan.
             arr = root;
         }
         else if (root.ValueKind == JsonValueKind.Object &&
                  root.TryGetProperty("datas", out var datas) &&
                  datas.ValueKind == JsonValueKind.Array)
         {
-            // Một số API dùng field "datas" (giống list hóa đơn bán ra).
+            // M\u1ED9t s\u1ED1 API d\u00F9ng field "datas" (gi\u1ED1ng list h\u00F3a \u0111\u01A1n b\u00E1n ra).
             arr = datas;
         }
         else if (root.ValueKind == JsonValueKind.Object &&
                  root.TryGetProperty("data", out var dataArr) &&
                  dataArr.ValueKind == JsonValueKind.Array)
         {
-            // Phòng trường hợp API dùng "data" (không có "s").
+            // Ph\u1ECFng tr\u01B0\u1EDDng h\u1EE3p API d\u00F9ng "data" (kh\u00F4ng c\u00F3 "s").
             arr = dataArr;
         }
         else
         {
-            // Không đúng format mong đợi.
+            // Kh\u00F4ng \u0111\u00FAng format mong \u0111\u1EE3i.
             return result;
         }
 
@@ -360,24 +446,24 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
         if (raw.Count == 0)
             return result;
 
-        // Mô phỏng giao diện cổng GDT:
-        // - Dòng đầu: "Hóa đơn đang tra cứu"
-        // - Các dòng sau: "Hóa đơn có liên quan"
-        // - Ô "Hóa đơn gốc" của dòng đầu: mô tả dựa trên dòng liên quan đầu tiên (nếu có).
+        // M\u00F4 ph\u1ECFng giao di\u1EC7n c\u1ED5ng GDT:
+        // - D\u00F2ng \u0111\u1EA7u: "H\u00F3a \u0111\u01A1n \u0111ang tra c\u1EE9u"
+        // - C\u00E1c d\u00F2ng sau: "H\u00F3a \u0111\u01A1n c\u00F3 li\u00EAn quan"
+        // - \u00D4 "H\u00F3a \u0111\u01A1n g\u1ED1c" c\u1EE7a d\u00F2ng \u0111\u1EA7u: m\u00F4 t\u1EA3 d\u1EF1a tr\u00EAn d\u00F2ng li\u00EAn quan \u0111\u1EA7u ti\u00EAn (n\u1EBFu c\u00F3).
         string hoaDonGocForFirst = string.Empty;
         if (raw.Count > 1)
         {
             var baseInv = raw[1];
-            var prefix = isAdjustment ? "Điều chỉnh cho hóa đơn có ký hiệu mẫu số" : "Thay thế cho hóa đơn có ký hiệu mẫu số";
+            var prefix = isAdjustment ? "\u0110i\u1EC1u ch\u1EC9nh cho h\u00F3a \u0111\u01A1n c\u00F3 k\u00FD hi\u1EC7u m\u1Eabu s\u1ED1" : "Thay th\u1EBF cho h\u00F3a \u0111\u01A1n c\u00F3 k\u00FD hi\u1EC7u m\u1Eabu s\u1ED1";
             hoaDonGocForFirst =
-                $"{prefix} {baseInv.Khmshdon}, ký hiệu hóa đơn {baseInv.Khhdon}, số hóa đơn {baseInv.Shdon}";
+                $"{prefix} {baseInv.Khmshdon}, k\u00FD hi\u1EC7u h\u00F3a \u0111\u01A1n {baseInv.Khhdon}, s\u1ED1 h\u00F3a \u0111\u01A1n {baseInv.Shdon}";
         }
 
         for (var i = 0; i < raw.Count; i++)
         {
             var (khmshdon, khhdon, shdon) = raw[i];
             var index = i + 1;
-            var loai = i == 0 ? "Hóa đơn đang tra cứu" : "Hóa đơn có liên quan";
+            var loai = i == 0 ? "H\u00F3a \u0111\u01A1n \u0111ang tra c\u1EE9u" : "H\u00F3a \u0111\u01A1n c\u00F3 li\u00EAn quan";
             var hoaDonGoc = i == 0 ? hoaDonGocForFirst : string.Empty;
             var noiDungDieuChinh = (isAdjustment && i == 0) ? adjustmentDescription : null;
             result.Add(new InvoiceRelativeItemDto(index, loai, khmshdon, khhdon, shdon, hoaDonGoc, noiDungDieuChinh));
@@ -450,10 +536,10 @@ public sealed class InvoiceDetailViewService : IInvoiceDetailViewService
                 if (tt.ValueKind != JsonValueKind.String) continue;
                 var ttStr = tt.GetString();
                 if (string.IsNullOrEmpty(ttStr)) continue;
-                if (ttStr.Contains("Tên hàng", StringComparison.OrdinalIgnoreCase) ||
-                    ttStr.Contains("Tên sản phẩm", StringComparison.OrdinalIgnoreCase) ||
-                    ttStr.Contains("Tên hàng hóa", StringComparison.OrdinalIgnoreCase) ||
-                    (ttStr.Contains("Tên", StringComparison.Ordinal) && ttStr.Trim().Length <= 10))
+                if (ttStr.Contains("T\u00EAn h\u00E0ng", StringComparison.OrdinalIgnoreCase) ||
+                    ttStr.Contains("T\u00EAn s\u1EA3n ph\u1EA9m", StringComparison.OrdinalIgnoreCase) ||
+                    ttStr.Contains("T\u00EAn h\u00E0ng h\u00F3a", StringComparison.OrdinalIgnoreCase) ||
+                    (ttStr.Contains("T\u00EAn", StringComparison.Ordinal) && ttStr.Trim().Length <= 10))
                 {
                     var dlieu = GetStr(entry, "dlieu") ?? GetStr(entry, "dLieu");
                     if (!string.IsNullOrWhiteSpace(dlieu))

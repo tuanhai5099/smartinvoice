@@ -50,6 +50,12 @@ public class InvoiceSyncService : IInvoiceSyncService
 
         var accessToken = company.AccessToken;
         var totalSynced = 0;
+        var scoWarningMessage = (string?)null;
+        var scoFailedAny = false;
+        var detailFetchFailed = new List<string>();
+        var detailFailureItems = new List<InvoiceFailureItem>();
+        var scoDetailFailed = new List<string>();
+        var scoListIncomplete = false;
         const int delayBetweenRequestsMs = 500; // Sleep giữa các request để tránh API rate limit (tham khảo References/VLKCrawlData).
         try
         {
@@ -80,15 +86,34 @@ public class InvoiceSyncService : IInvoiceSyncService
                     state = null;
                     do
                     {
-                        var respSco = await _apiClient.GetInvoicesSoldScoAsync(accessToken, monthStart, monthEnd, state, 50, cancellationToken).ConfigureAwait(false);
-                        await Task.Delay(delayBetweenRequestsMs, cancellationToken).ConfigureAwait(false);
-                        if (respSco?.Datas != null)
+                        try
                         {
-                            foreach (var item in respSco.Datas) allItems.Add(item);
-                            state = respSco.State;
-                            if (string.IsNullOrEmpty(state)) break;
+                            var respSco = await _apiClient.GetInvoicesSoldScoAsync(accessToken, monthStart, monthEnd, state, 50, cancellationToken).ConfigureAwait(false);
+                            await Task.Delay(delayBetweenRequestsMs, cancellationToken).ConfigureAwait(false);
+                            if (respSco?.Datas != null)
+                            {
+                                foreach (var item in respSco.Datas) allItems.Add(item);
+                                state = respSco.State;
+                                if (string.IsNullOrEmpty(state)) break;
+                            }
+                            else break;
                         }
-                        else break;
+                        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            scoListIncomplete = true;
+                            scoFailedAny = true;
+                            scoWarningMessage = "Hiện tại hệ thống hóa đơn điện tử không lấy được hóa đơn từ máy tính tiền (SCO).";
+                            _logger.LogWarning(ex, "SCO query timeout/operation canceled (sold) companyId={CompanyId}, range={FromDate:yyyy-MM-dd}..{ToDate:yyyy-MM-dd}", companyId, monthStart, monthEnd);
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            scoListIncomplete = true;
+                            scoFailedAny = true;
+                            scoWarningMessage = "Hiện tại hệ thống hóa đơn điện tử không lấy được hóa đơn từ máy tính tiền (SCO).";
+                            _logger.LogWarning(ex, "SCO query failed (sold) companyId={CompanyId}, range={FromDate:yyyy-MM-dd}..{ToDate:yyyy-MM-dd}", companyId, monthStart, monthEnd);
+                            break;
+                        }
                     } while (!string.IsNullOrEmpty(state));
                 }
                 else
@@ -108,53 +133,123 @@ public class InvoiceSyncService : IInvoiceSyncService
                     state = null;
                     do
                     {
-                        var respSco = await _apiClient.GetInvoicesPurchaseScoAsync(accessToken, monthStart, monthEnd, state, 50, cancellationToken).ConfigureAwait(false);
-                        await Task.Delay(delayBetweenRequestsMs, cancellationToken).ConfigureAwait(false);
-                        if (respSco?.Datas != null)
+                        try
                         {
-                            foreach (var item in respSco.Datas) allItems.Add(item);
-                            state = respSco.State;
-                            if (string.IsNullOrEmpty(state)) break;
+                            var respSco = await _apiClient.GetInvoicesPurchaseScoAsync(accessToken, monthStart, monthEnd, state, 50, cancellationToken).ConfigureAwait(false);
+                            await Task.Delay(delayBetweenRequestsMs, cancellationToken).ConfigureAwait(false);
+                            if (respSco?.Datas != null)
+                            {
+                                foreach (var item in respSco.Datas) allItems.Add(item);
+                                state = respSco.State;
+                                if (string.IsNullOrEmpty(state)) break;
+                            }
+                            else break;
                         }
-                        else break;
+                        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            // Timeout / cancel do HttpClient, nhưng không phải do người dùng hủy luồng.
+                            scoListIncomplete = true;
+                            scoFailedAny = true;
+                            scoWarningMessage = "Hiện tại hệ thống hóa đơn điện tử không lấy được hóa đơn từ máy tính tiền (SCO).";
+                            _logger.LogWarning(ex, "SCO query timeout/operation canceled (purchase) companyId={CompanyId}, range={FromDate:yyyy-MM-dd}..{ToDate:yyyy-MM-dd}", companyId, monthStart, monthEnd);
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            scoListIncomplete = true;
+                            scoFailedAny = true;
+                            scoWarningMessage = "Hiện tại hệ thống hóa đơn điện tử không lấy được hóa đơn từ máy tính tiền (SCO).";
+                            _logger.LogWarning(ex, "SCO query failed (purchase) companyId={CompanyId}, range={FromDate:yyyy-MM-dd}..{ToDate:yyyy-MM-dd}", companyId, monthStart, monthEnd);
+                            break;
+                        }
                     } while (!string.IsNullOrEmpty(state));
                 }
             }
 
             var syncedAt = DateTime.UtcNow;
+            Dictionary<string, Invoice>? existingByExternalId = null;
+            if (includeDetail && allItems.Count > 0)
+            {
+                var externalIds = allItems
+                    .Select(i => i.Id ?? $"{i.Nbmst}_{i.Khhdon}_{i.Shdon}_{i.Khmshdon}")
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                var existing = await _uow.Invoices.GetByCompanyAndExternalIdsAsync(companyId, externalIds, cancellationToken).ConfigureAwait(false);
+                existingByExternalId = existing.ToDictionary(i => i.ExternalId, i => i, StringComparer.Ordinal);
+            }
+
             foreach (var item in allItems)
             {
                 var externalId = item.Id ?? $"{item.Nbmst}_{item.Khhdon}_{item.Shdon}_{item.Khmshdon}";
                 var payloadJson = item.RawJson;
                 string? lineItemsJson = null;
-                if (includeDetail && item.Nbmst != null && item.Khhdon != null)
+                Invoice? existingInvoice = null;
+                var hasExistingDetail = includeDetail
+                                        && existingByExternalId != null
+                                        && existingByExternalId.TryGetValue(externalId, out existingInvoice)
+                                        && !string.IsNullOrWhiteSpace(existingInvoice.LineItemsJson);
+
+                // Neu da co detail trong DB thi giu nguyen, khong goi lai API detail.
+                if (hasExistingDetail && existingInvoice != null)
+                {
+                    lineItemsJson = existingInvoice.LineItemsJson;
+                    if (!string.IsNullOrWhiteSpace(existingInvoice.PayloadJson))
+                        payloadJson = existingInvoice.PayloadJson;
+                }
+                else if (includeDetail && item.Nbmst != null && item.Khhdon != null)
                 {
                     await Task.Delay(300, cancellationToken).ConfigureAwait(false); // Sleep giữa các request chi tiết.
-                    try
+                    // SCO uu tien query URL SCO truoc, sau do moi fallback URL thuong.
+                    var scoFirst = IsScoInvoice(item.RawJson);
+                    var detailJson = await TryGetInvoiceDetailJsonWithFallbackAsync(
+                        accessToken,
+                        item.Nbmst,
+                        item.Khhdon,
+                        item.Shdon,
+                        item.Khmshdon,
+                        scoFirst,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(detailJson))
                     {
-                        var detailJson = await _apiClient.GetInvoiceDetailJsonAsync(accessToken, item.Nbmst, item.Khhdon, item.Shdon, item.Khmshdon, fromSco: false, cancellationToken).ConfigureAwait(false);
-                        if (!string.IsNullOrEmpty(detailJson))
+                        payloadJson = detailJson;
+                        lineItemsJson = ExtractLineItemsJson(detailJson);
+                    }
+                    else
+                    {
+                        detailFetchFailed.Add(externalId);
+                        var msg = scoFirst
+                            ? "Không lấy được chi tiết (đã thử kênh máy tính tiền SCO); có thể timeout hoặc hệ thống chưa trả dữ liệu."
+                            : "Không lấy được chi tiết từ API; có thể timeout hoặc lỗi hệ thống.";
+                        detailFailureItems.Add(new InvoiceFailureItem
                         {
-                            payloadJson = detailJson;
-                            lineItemsJson = ExtractLineItemsJson(detailJson);
+                            ExternalId = externalId,
+                            KyHieu = item.Khhdon,
+                            Khmshdon = item.Khmshdon,
+                            SoHoaDon = item.Shdon,
+                            ErrorMessage = msg
+                        });
+                        if (IsScoInvoice(item.RawJson))
+                            scoDetailFailed.Add(externalId);
+                        if (scoFirst)
+                        {
+                            scoFailedAny = true;
+                            scoWarningMessage = "Hiện tại hệ thống hóa đơn điện tử không lấy được hóa đơn từ máy tính tiền (SCO).";
                         }
                     }
-                    catch
+                }
+                else if (includeDetail)
+                {
+                    detailFetchFailed.Add(externalId);
+                    detailFailureItems.Add(new InvoiceFailureItem
                     {
-                        try
-                        {
-                            var detailJson = await _apiClient.GetInvoiceDetailJsonAsync(accessToken, item.Nbmst, item.Khhdon, item.Shdon, item.Khmshdon, fromSco: true, cancellationToken).ConfigureAwait(false);
-                            if (!string.IsNullOrEmpty(detailJson))
-                            {
-                                payloadJson = detailJson;
-                                lineItemsJson = ExtractLineItemsJson(detailJson);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to fetch detail for invoice {ExternalId}", externalId);
-                        }
-                    }
+                        ExternalId = externalId,
+                        KyHieu = item.Khhdon,
+                        Khmshdon = item.Khmshdon,
+                        SoHoaDon = item.Shdon,
+                        ErrorMessage = "Thiếu MST người bán hoặc ký hiệu hóa đơn trong dữ liệu tổng hợp, không gọi được API chi tiết."
+                    });
+                    if (IsScoInvoice(item.RawJson))
+                        scoDetailFailed.Add(externalId);
                 }
 
                 var invoice = new Invoice
@@ -174,13 +269,42 @@ public class InvoiceSyncService : IInvoiceSyncService
                 totalSynced++;
             }
 
-            return new SyncInvoicesResult(true, null, totalSynced);
+            var distinctDetailFailed = detailFetchFailed.Count > 0
+                ? detailFetchFailed.Distinct(StringComparer.Ordinal).ToList()
+                : null;
+            var distinctScoDetailFailed = scoDetailFailed.Count > 0
+                ? scoDetailFailed.Distinct(StringComparer.Ordinal).ToList()
+                : null;
+            IReadOnlyList<InvoiceFailureItem>? failureItems = detailFailureItems.Count > 0
+                ? DeduplicateFailureItems(detailFailureItems)
+                : null;
+            return new SyncInvoicesResult(
+                true,
+                scoFailedAny ? scoWarningMessage : null,
+                totalSynced,
+                distinctDetailFailed,
+                scoListIncomplete,
+                distinctScoDetailFailed)
+            {
+                DetailFailureItems = failureItems
+            };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Sync invoices failed for company {CompanyId}", companyId);
-            return new SyncInvoicesResult(false, ex.Message, totalSynced);
+            return new SyncInvoicesResult(false, ex.Message, totalSynced, null, false, null);
         }
+    }
+
+    private static IReadOnlyList<InvoiceFailureItem> DeduplicateFailureItems(List<InvoiceFailureItem> items)
+    {
+        var map = new Dictionary<string, InvoiceFailureItem>(StringComparer.Ordinal);
+        foreach (var it in items)
+        {
+            if (string.IsNullOrEmpty(it.ExternalId)) continue;
+            map.TryAdd(it.ExternalId, it);
+        }
+        return map.Values.ToList();
     }
 
     /// <summary>
@@ -218,6 +342,188 @@ public class InvoiceSyncService : IInvoiceSyncService
         return null;
     }
 
+    private static bool IsScoInvoice(string? rawJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("hthdon", out var hthdon) &&
+                hthdon.ValueKind == JsonValueKind.Number &&
+                hthdon.GetInt32() == 5)
+            {
+                return true;
+            }
+            if (root.TryGetProperty("tchat", out var tchat) &&
+                tchat.ValueKind == JsonValueKind.Number &&
+                tchat.GetInt32() == 2)
+            {
+                return true;
+            }
+        }
+        catch
+        {
+            // ignore parse error and treat as non-SCO
+        }
+        return false;
+    }
+
+    private async Task<string?> TryGetInvoiceDetailJsonWithFallbackAsync(
+        string accessToken,
+        string nbmst,
+        string khhdon,
+        int soHoaDon,
+        ushort khmshdon,
+        bool scoFirst,
+        CancellationToken cancellationToken)
+    {
+        var firstFromSco = scoFirst;
+        var secondFromSco = !scoFirst;
+
+        try
+        {
+            var detailJson = await _apiClient
+                .GetInvoiceDetailJsonAsync(accessToken, nbmst, khhdon, soHoaDon, khmshdon, firstFromSco, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(detailJson))
+                return detailJson;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // timeout from HTTP layer -> fallback lan 2
+        }
+        catch (Exception)
+        {
+            // fallback lan 2
+        }
+
+        try
+        {
+            var detailJson = await _apiClient
+                .GetInvoiceDetailJsonAsync(accessToken, nbmst, khhdon, soHoaDon, khmshdon, secondFromSco, cancellationToken)
+                .ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(detailJson) ? null : detailJson;
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Detail query timeout for invoice {Nbmst}-{Khhdon}-{Shdon} (scoFirst={ScoFirst})", nbmst, khhdon, soHoaDon, scoFirst);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Detail query failed for invoice {Nbmst}-{Khhdon}-{Shdon} (scoFirst={ScoFirst})", nbmst, khhdon, soHoaDon, scoFirst);
+            return null;
+        }
+    }
+
+    public async Task<InvoiceDetailRefreshResult> RefreshInvoiceDetailsAsync(Guid companyId, IReadOnlyList<string> externalIds, IProgress<int>? progress = null, CancellationToken cancellationToken = default)
+    {
+        if (externalIds == null || externalIds.Count == 0)
+            return new InvoiceDetailRefreshResult(0, 0, Array.Empty<string>());
+
+        var company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
+        if (company == null)
+            return new InvoiceDetailRefreshResult(0, externalIds.Count, externalIds);
+
+        var tokenValid = await _companyService.EnsureValidTokenAsync(companyId, cancellationToken).ConfigureAwait(false);
+        if (!tokenValid)
+        {
+            var loginResult = await _companyService.LoginAndSyncProfileAsync(companyId).ConfigureAwait(false);
+            if (!loginResult.Success)
+                return new InvoiceDetailRefreshResult(0, externalIds.Count, externalIds);
+        }
+
+        company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
+        if (company?.AccessToken == null)
+            return new InvoiceDetailRefreshResult(0, externalIds.Count, externalIds);
+
+        var accessToken = company.AccessToken;
+        var failed = new List<string>();
+        var success = 0;
+        var n = 0;
+        foreach (var externalId in externalIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            n++;
+            try
+            {
+                var entity = await _uow.Invoices.GetByExternalIdAsync(companyId, externalId, cancellationToken).ConfigureAwait(false);
+                if (entity == null)
+                {
+                    failed.Add(externalId);
+                    progress?.Report(n);
+                    continue;
+                }
+
+                var (nbmst, khhdon, shdon, khmshdon) = TryParseDetailKeysFromInvoice(entity);
+                if (string.IsNullOrEmpty(nbmst) || string.IsNullOrEmpty(khhdon))
+                {
+                    failed.Add(externalId);
+                    progress?.Report(n);
+                    continue;
+                }
+
+                await Task.Delay(300, cancellationToken).ConfigureAwait(false);
+                var scoFirst = entity.MayTinhTien || IsScoInvoice(entity.PayloadJson);
+                var detailJson = await TryGetInvoiceDetailJsonWithFallbackAsync(
+                    accessToken, nbmst, khhdon, shdon, khmshdon, scoFirst, cancellationToken).ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(detailJson))
+                {
+                    failed.Add(externalId);
+                    progress?.Report(n);
+                    continue;
+                }
+
+                entity.PayloadJson = detailJson;
+                entity.LineItemsJson = ExtractLineItemsJson(detailJson);
+                entity.SyncedAt = DateTime.UtcNow;
+                entity.UpdatedAt = DateTime.UtcNow;
+                FillDenormalizedFromPayload(entity);
+                await _uow.Invoices.UpdateAsync(entity, cancellationToken).ConfigureAwait(false);
+                success++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Refresh invoice detail failed for externalId {ExternalId}", externalId);
+                failed.Add(externalId);
+            }
+
+            progress?.Report(n);
+        }
+
+        return new InvoiceDetailRefreshResult(success, failed.Count, failed);
+    }
+
+    private static (string? nbmst, string? khhdon, int shdon, ushort khmshdon) TryParseDetailKeysFromInvoice(Invoice entity)
+    {
+        var nbmst = entity.NbMst?.Trim();
+        var khhdon = entity.KyHieu?.Trim();
+        var shdon = entity.SoHoaDon;
+        var khmshdon = (ushort)0;
+        try
+        {
+            using var doc = JsonDocument.Parse(entity.PayloadJson);
+            var r = doc.RootElement;
+            if (string.IsNullOrEmpty(nbmst))
+                nbmst = GetStr(r, "nbmst")?.Trim();
+            if (string.IsNullOrEmpty(khhdon))
+                khhdon = GetStr(r, "khhdon")?.Trim();
+            if (shdon == 0 && r.TryGetProperty("shdon", out var sh) && sh.ValueKind == JsonValueKind.Number)
+                shdon = sh.GetInt32();
+            if (r.TryGetProperty("khmshdon", out var km) && km.ValueKind == JsonValueKind.Number)
+                khmshdon = (ushort)km.GetInt32();
+        }
+        catch
+        {
+            // best-effort
+        }
+
+        return (nbmst, khhdon, shdon, khmshdon);
+    }
+
     public async Task<IReadOnlyList<InvoiceDisplayDto>> GetLastSyncedInvoicesAsync(Guid companyId, CancellationToken cancellationToken = default)
     {
         var list = await _uow.Invoices.GetByCompanyIdAsync(companyId, cancellationToken).ConfigureAwait(false);
@@ -247,6 +553,8 @@ public class InvoiceSyncService : IInvoiceSyncService
             filter.FilterTenNguoiBan,
             filter.FilterMstLoaiTru,
             filter.FilterLoaiTruBenBan,
+            filter.FilterProviderTaxCode,
+            filter.FilterTvanTaxCode,
             sortBy,
             filter.SortDescending
         );
@@ -317,11 +625,12 @@ public class InvoiceSyncService : IInvoiceSyncService
         if (company?.AccessToken == null)
             return new DownloadXmlResult(false, "Token trống.", 0);
 
-        // folderPath = thư mục gốc XML theo công ty (Mã công ty)\XML. Lưu từng hóa đơn vào con tháng_năm (yyyy_MM).
+        // folderPath = gốc XML theo công ty: Documents\SmartInvoice\{Mã công ty}\XML — mỗi HĐ vào folderPath\yyyy_MM\*.xml (đồng bộ UI + job nền).
         var total = invoices.Count;
         var downloaded = 0;
         var failedCount = 0;
         var noXmlCount = 0;
+        var scoWarningMessage = (string?)null;
         var tempPackageFolder = Path.Combine(folderPath, "_XmlPackage_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
         Directory.CreateDirectory(tempPackageFolder);
         const int delayMs = 250;
@@ -338,7 +647,7 @@ public class InvoiceSyncService : IInvoiceSyncService
             {
                 failedCount++;
                 var key = $"{SanitizeFileName(khhdon ?? "")}-{inv.SoHoaDon}";
-                progress?.Report(new DownloadXmlProgress(i + 1, total, null, new DownloadXmlItemResult(key, soHoaDonDisplay, false, false, "Thiếu MST hoặc ký hiệu")));
+                progress?.Report(new DownloadXmlProgress(i + 1, total, null, new DownloadXmlItemResult(key, soHoaDonDisplay, false, false, "Thiếu MST hoặc ký hiệu", inv.Id)));
                 continue;
             }
             // Tên file XML giống tên PDF: {SoHoaDon}_{KyHieu}.xml để người dùng dễ nhận ra.
@@ -359,7 +668,7 @@ public class InvoiceSyncService : IInvoiceSyncService
                     if ((DateTime.Now - lastWrite).TotalDays < XmlRedownloadAfterDays)
                     {
                         downloaded++;
-                        itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, true, false, "Đã có XML, bỏ qua tải lại.");
+                        itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, true, false, "Đã có XML, bỏ qua tải lại.", inv.Id);
                         try
                         {
                             var destXmlPath = Path.Combine(tempPackageFolder, xmlFileName);
@@ -380,6 +689,8 @@ public class InvoiceSyncService : IInvoiceSyncService
                 _logger.LogWarning(ex, "Failed when checking existing XML file for invoice {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
             }
 
+            progress?.Report(new DownloadXmlProgress(i + 1, total, xmlFileName, null));
+
             try
             {
                 var bytes = await _apiClient.GetInvoiceExportAsync(company.AccessToken, nbmst, khhdon, inv.SoHoaDon, inv.Khmshdon, fromSco: inv.MayTinhTien, cancellationToken).ConfigureAwait(false);
@@ -389,7 +700,7 @@ public class InvoiceSyncService : IInvoiceSyncService
                     if (saved)
                     {
                         downloaded++;
-                        itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, true, false, null);
+                        itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, true, false, null, inv.Id);
                         try
                         {
                             var sourceXml = Path.Combine(monthFolder, xmlFileName);
@@ -407,25 +718,43 @@ public class InvoiceSyncService : IInvoiceSyncService
                     else
                     {
                         failedCount++;
-                        itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, false, "Lỗi không lưu được file");
+                        itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, false, "Lỗi không lưu được file", inv.Id);
                     }
                 }
                 else
                 {
                     noXmlCount++;
-                    itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, true, "Không có XML");
+                    itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, true, "Không có XML", inv.Id);
                 }
+            }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                failedCount++;
+                if (inv.MayTinhTien)
+                {
+                    scoWarningMessage = "Hiện tại hệ thống hóa đơn điện tử không lấy được hóa đơn từ máy tính tiền (SCO).";
+                    _logger.LogWarning(ex, "SCO export-xml timeout for invoice {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+                }
+                else
+                {
+                    _logger.LogWarning(ex, "Export-xml timeout for invoice {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
+                }
+
+                itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, false, "Timeout khi tải XML.", inv.Id);
             }
             catch (InvoiceExportNoXmlException ex)
             {
                 noXmlCount++;
-                itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, true, ex.Message ?? "Không tồn tại hồ sơ gốc của hóa đơn.");
+                itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, true, ex.Message ?? "Không tồn tại hồ sơ gốc của hóa đơn.", inv.Id);
             }
             catch (Exception ex)
             {
                 failedCount++;
-                _logger.LogWarning(ex, "Failed to download export for invoice {Khhdon}-{Shdon}", khhdon, inv.SoHoaDon);
-                itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, false, ex.Message);
+                if (inv.MayTinhTien)
+                    scoWarningMessage = "Hiện tại hệ thống hóa đơn điện tử không lấy được hóa đơn từ máy tính tiền (SCO).";
+
+                _logger.LogWarning(ex, "Failed to download export for invoice {Khhdon}-{Shdon} (fromSco={FromSco})", khhdon, inv.SoHoaDon, inv.MayTinhTien);
+                itemResult = new DownloadXmlItemResult(baseName, soHoaDonDisplay, false, false, ex.Message, inv.Id);
             }
 
             try
@@ -486,7 +815,7 @@ public class InvoiceSyncService : IInvoiceSyncService
             }
         }
 
-        return new DownloadXmlResult(true, null, downloaded, failedCount, noXmlCount, zipPath);
+        return new DownloadXmlResult(true, scoWarningMessage, downloaded, failedCount, noXmlCount, zipPath);
     }
 
     /// <summary>
@@ -573,6 +902,14 @@ public class InvoiceSyncService : IInvoiceSyncService
             inv.NguoiMua = GetStr(r, "nmten") ?? GetStr(r, "nmtnmua");
             inv.MstMua = GetStr(r, "nmmst");
             inv.Dvtte = GetStr(r, "dvtte");
+
+            // Nếu chưa có ProviderTaxCode/TvanTaxCode (cột mới) thì cố gắng denormalize từ root.
+            inv.ProviderTaxCode ??= GetStr(r, "msttcgp");
+            inv.TvanTaxCode ??= GetStr(r, "tvanDnKntt");
+
+            // Denormalize provider/tvan tax codes for fast filtering.
+            inv.ProviderTaxCode = GetStr(r, "msttcgp");
+            inv.TvanTaxCode = GetStr(r, "tvanDnKntt");
         }
         catch
         {
@@ -621,6 +958,9 @@ public class InvoiceSyncService : IInvoiceSyncService
             var mhdon = GetStr(r, "mhdon");
             var dvtte = GetStr(r, "dvtte");
 
+            var providerTaxCode = inv.ProviderTaxCode ?? GetStr(r, "msttcgp");
+            var tvanTaxCode = inv.TvanTaxCode ?? GetStr(r, "tvanDnKntt");
+
             // Tỷ giá: ưu tiên trường tgia trong JSON tổng (đúng theo dữ liệu cổng),
             // nếu không có thì fallback sang cttkhac["ExchangeRate"].
             decimal? exchangeRate = TryGetDecimal(r, "tgia");
@@ -653,7 +993,8 @@ public class InvoiceSyncService : IInvoiceSyncService
                 nbten, nbmst, nmten, nmmst, tgtcthue, tgtthue, tgtttbso, thtttoan,
                 tthai, ttxly, trangThaiDisplay, khmshdon, coMa, mayTinhTien, isBanRa,
                 mhdon, dvtte, thlap, hthdon, counterpartyName, counterpartyMst,
-                inv.XmlStatus, inv.XmlBaseName, exchangeRate);
+                inv.XmlStatus, inv.XmlBaseName, exchangeRate,
+                providerTaxCode, tvanTaxCode);
         }
         catch
         {

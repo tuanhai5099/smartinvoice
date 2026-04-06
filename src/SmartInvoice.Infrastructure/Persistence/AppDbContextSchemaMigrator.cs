@@ -1,6 +1,8 @@
 using System;
 using System.Data.Common;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using SmartInvoice.Core.Domain;
 
 namespace SmartInvoice.Infrastructure.Persistence;
 
@@ -21,8 +23,55 @@ public static class AppDbContextSchemaMigrator
         EnsureBackgroundJobsTable(db);
         EnsureBackgroundJobResultPathColumn(db);
         EnsureBackgroundJobReportColumns(db);
+        EnsureBackgroundJobPdfPhaseCountColumns(db);
         EnsureBackgroundJobExportColumns(db);
         EnsureBackgroundJobPayloadJsonColumn(db);
+        EnsureBackgroundJobFailureSummaryJsonColumn(db);
+        ResetInterruptedRunningBackgroundJobs(db);
+    }
+
+    /// <summary>Job còn <see cref="BackgroundJobStatus.Running"/> sau khi tắt app / crash — đánh dấu thất bại để hàng đợi không kẹt.</summary>
+    private static void ResetInterruptedRunningBackgroundJobs(AppDbContext db)
+    {
+        const string msg = "Ứng dụng đã thoát khi job đang chạy (hoặc bị ngắt bất thường).";
+        db.Database.ExecuteSqlInterpolated(
+            $"UPDATE BackgroundJobs SET Status = {(int)BackgroundJobStatus.Failed}, FinishedAt = datetime('now','localtime'), LastError = {msg} WHERE Status = {(int)BackgroundJobStatus.Running}");
+    }
+
+    private static void EnsureBackgroundJobFailureSummaryJsonColumn(DbContext db)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != System.Data.ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                connection.Open();
+            using var checkCmd = connection.CreateCommand();
+            checkCmd.CommandText = "PRAGMA table_info('BackgroundJobs');";
+            using var reader = checkCmd.ExecuteReader();
+            var hasCol = false;
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), "FailureSummaryJson", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasCol = true;
+                    break;
+                }
+            }
+            if (!hasCol)
+            {
+                reader.Close();
+                using var alterCmd = connection.CreateCommand();
+                alterCmd.CommandText = "ALTER TABLE BackgroundJobs ADD COLUMN FailureSummaryJson TEXT NULL;";
+                alterCmd.ExecuteNonQuery();
+            }
+        }
+        catch { /* best-effort */ }
+        finally
+        {
+            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
+                connection.Close();
+        }
     }
 
     private static void EnsureBackgroundJobPayloadJsonColumn(DbContext db)
@@ -121,6 +170,44 @@ public static class AppDbContextSchemaMigrator
                 ["XmlDownloadedCount"] = "ALTER TABLE BackgroundJobs ADD COLUMN XmlDownloadedCount INTEGER NOT NULL DEFAULT 0;",
                 ["XmlFailedCount"] = "ALTER TABLE BackgroundJobs ADD COLUMN XmlFailedCount INTEGER NOT NULL DEFAULT 0;",
                 ["XmlNoXmlCount"] = "ALTER TABLE BackgroundJobs ADD COLUMN XmlNoXmlCount INTEGER NOT NULL DEFAULT 0;"
+            };
+            foreach (var col in columns)
+            {
+                if (existing.Contains(col)) continue;
+                using var alterCmd = connection.CreateCommand();
+                alterCmd.CommandText = alterSql[col];
+                alterCmd.ExecuteNonQuery();
+            }
+        }
+        catch { /* best-effort */ }
+        finally
+        {
+            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
+                connection.Close();
+        }
+    }
+
+    private static void EnsureBackgroundJobPdfPhaseCountColumns(DbContext db)
+    {
+        var columns = new[] { "PdfDownloadedCount", "PdfFailedCount", "PdfSkippedCount" };
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != System.Data.ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                connection.Open();
+            using var checkCmd = connection.CreateCommand();
+            checkCmd.CommandText = "PRAGMA table_info('BackgroundJobs');";
+            using var reader = checkCmd.ExecuteReader();
+            var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (reader.Read())
+                existing.Add(reader.GetString(1));
+            reader.Close();
+            var alterSql = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PdfDownloadedCount"] = "ALTER TABLE BackgroundJobs ADD COLUMN PdfDownloadedCount INTEGER NOT NULL DEFAULT 0;",
+                ["PdfFailedCount"] = "ALTER TABLE BackgroundJobs ADD COLUMN PdfFailedCount INTEGER NOT NULL DEFAULT 0;",
+                ["PdfSkippedCount"] = "ALTER TABLE BackgroundJobs ADD COLUMN PdfSkippedCount INTEGER NOT NULL DEFAULT 0;"
             };
             foreach (var col in columns)
             {
@@ -338,7 +425,8 @@ CREATE TABLE IF NOT EXISTS Invoices (
             "CoMa", "MayTinhTien", "KyHieu", "SoHoaDon",
             "NbMst", "NguoiBan", "NguoiMua", "MstMua",
             "Dvtte",
-            "XmlStatus", "XmlBaseName"
+            "XmlStatus", "XmlBaseName",
+            "ProviderTaxCode", "TvanTaxCode"
         };
         var connection = db.Database.GetDbConnection();
         var shouldClose = connection.State != System.Data.ConnectionState.Open;
@@ -370,7 +458,9 @@ CREATE TABLE IF NOT EXISTS Invoices (
                 ["MstMua"] = "ALTER TABLE Invoices ADD COLUMN MstMua TEXT NULL;",
                 ["Dvtte"] = "ALTER TABLE Invoices ADD COLUMN Dvtte TEXT NULL;",
                 ["XmlStatus"] = "ALTER TABLE Invoices ADD COLUMN XmlStatus INTEGER NOT NULL DEFAULT 0;",
-                ["XmlBaseName"] = "ALTER TABLE Invoices ADD COLUMN XmlBaseName TEXT NULL;"
+                ["XmlBaseName"] = "ALTER TABLE Invoices ADD COLUMN XmlBaseName TEXT NULL;",
+                ["ProviderTaxCode"] = "ALTER TABLE Invoices ADD COLUMN ProviderTaxCode TEXT NULL;",
+                ["TvanTaxCode"] = "ALTER TABLE Invoices ADD COLUMN TvanTaxCode TEXT NULL;"
             };
             foreach (var col in columns)
             {
@@ -378,6 +468,65 @@ CREATE TABLE IF NOT EXISTS Invoices (
                 using var alterCmd = connection.CreateCommand();
                 alterCmd.CommandText = alterSql[col];
                 alterCmd.ExecuteNonQuery();
+            }
+
+            // Sau khi đảm bảo cột tồn tại, backfill ProviderTaxCode/TvanTaxCode từ PayloadJson cho các hóa đơn cũ (best-effort).
+            try
+            {
+                using var selectCmd = connection.CreateCommand();
+                selectCmd.CommandText = "SELECT Id, PayloadJson FROM Invoices WHERE ProviderTaxCode IS NULL OR TvanTaxCode IS NULL;";
+                using var reader2 = selectCmd.ExecuteReader();
+                var toUpdate = new List<(string Id, string Payload)>();
+                while (reader2.Read())
+                {
+                    var id = reader2.GetString(0);
+                    var payload = reader2.GetString(1);
+                    toUpdate.Add((id, payload));
+                }
+                reader2.Close();
+
+                foreach (var (id, payload) in toUpdate)
+                {
+                    string? providerTax = null;
+                    string? tvanTax = null;
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+                        var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
+                        if (r.TryGetProperty("msttcgp", out var mstProp) && mstProp.ValueKind == JsonValueKind.String)
+                            providerTax = mstProp.GetString()?.Trim();
+                        if (r.TryGetProperty("tvanDnKntt", out var tvanProp) && tvanProp.ValueKind == JsonValueKind.String)
+                            tvanTax = tvanProp.GetString()?.Trim();
+                    }
+                    catch
+                    {
+                        // ignore parse error, best-effort only
+                    }
+
+                    if (string.IsNullOrWhiteSpace(providerTax) && string.IsNullOrWhiteSpace(tvanTax))
+                        continue;
+
+                    using var updateCmd = connection.CreateCommand();
+                    updateCmd.CommandText = "UPDATE Invoices SET ProviderTaxCode = COALESCE(ProviderTaxCode, @p1), TvanTaxCode = COALESCE(TvanTaxCode, @p2) WHERE Id = @id;";
+                    var p1 = updateCmd.CreateParameter();
+                    p1.ParameterName = "@p1";
+                    p1.Value = (object?)providerTax ?? DBNull.Value;
+                    var p2 = updateCmd.CreateParameter();
+                    p2.ParameterName = "@p2";
+                    p2.Value = (object?)tvanTax ?? DBNull.Value;
+                    var pid = updateCmd.CreateParameter();
+                    pid.ParameterName = "@id";
+                    pid.Value = id;
+                    updateCmd.Parameters.Add(p1);
+                    updateCmd.Parameters.Add(p2);
+                    updateCmd.Parameters.Add(pid);
+                    updateCmd.ExecuteNonQuery();
+                }
+            }
+            catch
+            {
+                // best-effort backfill; nếu lỗi thì bỏ qua, không chặn khởi động app
             }
         }
         catch { /* best-effort */ }

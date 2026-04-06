@@ -1,31 +1,10 @@
 using System.Text.Json;
-using SmartInvoice.Application.Services;
 
-namespace SmartInvoice.Infrastructure.Services.Pdf;
+namespace SmartInvoice.Application.Services.InvoicePayloadParsing;
 
-/// <summary>Gợi ý tra cứu cho MISA meInvoice (0101243150): link tra cứu cố định + Mã tra cứu = transaction id trong cttkhac.</summary>
-public sealed class MeinvoiceLookupProvider : IInvoiceLookupProvider
+public static class MeinvoiceTransactionParsing
 {
-    public string ProviderKey => "0101243150";
-
-    private const string LookupUrl = "https://www.meinvoice.vn/tra-cuu";
-
-    public InvoiceLookupSuggestion? GetSuggestion(string payloadJson, string? sellerTaxCode)
-    {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
-
-        var transactionId = GetTransactionIdFromPayload(payloadJson);
-
-        return new InvoiceLookupSuggestion(
-            ProviderKey,
-            "MISA meInvoice",
-            LookupUrl,
-            string.IsNullOrWhiteSpace(transactionId) ? null : transactionId.Trim(),
-            string.IsNullOrWhiteSpace(sellerTaxCode) ? null : sellerTaxCode.Trim());
-    }
-
-    /// <summary>Lấy giá trị transaction id từ cttkhac: item có ttruong = "transaction id" (hoặc "transactionid") thì lấy dlieu.</summary>
-    private static string? GetTransactionIdFromPayload(string payloadJson)
+    public static string? GetTransactionIdFromPayload(string payloadJson)
     {
         if (string.IsNullOrWhiteSpace(payloadJson)) return null;
         try

@@ -14,6 +14,10 @@ public interface IInvoicePdfFetcher
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Kết quả: Success với PDF bytes và tên file gợi ý, hoặc Failure với thông báo lỗi.</returns>
     Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default);
+
+    /// <summary>Tải PDF dùng đúng <see cref="InvoiceContentContext.ContentForFetcher"/> (JSON hoặc XML).</summary>
+    Task<InvoicePdfResult> AcquirePdfAsync(InvoiceContentContext context, CancellationToken cancellationToken = default) =>
+        FetchPdfAsync(context.ContentForFetcher, cancellationToken);
 }
 
 /// <summary>

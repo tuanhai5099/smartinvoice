@@ -1,25 +1,19 @@
 using System.Text.Json;
-using SmartInvoice.Application.Services;
 
-namespace SmartInvoice.Infrastructure.Services.Pdf;
+namespace SmartInvoice.Application.Services.InvoicePayloadParsing;
 
-/// <summary>Gợi ý tra cứu cho HTInvoice (0315638251): DC TC + Mã TC trong cttkhac.</summary>
-public sealed class HtInvoiceLookupProvider : IInvoiceLookupProvider
+public static class HtInvoiceTraCuuParsing
 {
-    public string ProviderKey => "0315638251";
-
-    public InvoiceLookupSuggestion? GetSuggestion(string payloadJson, string? sellerTaxCode)
+    public static (string? SearchUrl, string? MaTraCuu) GetSearchUrlAndCodeFromPayload(string payloadJson)
     {
-        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
-
+        if (string.IsNullOrWhiteSpace(payloadJson)) return (null, null);
         try
         {
             using var doc = JsonDocument.Parse(payloadJson);
             var root = doc.RootElement;
             var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-
             if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array)
-                return null;
+                return (null, null);
 
             string? dcTc = null;
             string? maTc = null;
@@ -41,22 +35,11 @@ public sealed class HtInvoiceLookupProvider : IInvoiceLookupProvider
                     maTc = value;
             }
 
-            if (dcTc == null && maTc == null && string.IsNullOrWhiteSpace(sellerTaxCode))
-                return null;
-
-            var url = string.IsNullOrWhiteSpace(dcTc) ? "https://laphoadon.htinvoice.vn/TraCuu" : dcTc;
-
-            return new InvoiceLookupSuggestion(
-                ProviderKey,
-                "HTInvoice",
-                url,
-                maTc,
-                string.IsNullOrWhiteSpace(sellerTaxCode) ? null : sellerTaxCode.Trim());
+            return (dcTc, maTc);
         }
         catch
         {
-            return null;
+            return (null, null);
         }
     }
 }
-
