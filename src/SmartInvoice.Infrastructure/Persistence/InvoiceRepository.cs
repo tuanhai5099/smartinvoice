@@ -263,6 +263,8 @@ public class InvoiceRepository : IInvoiceRepository, IBackgroundJobRepository
             existing.NguoiMua = invoice.NguoiMua;
             existing.MstMua = invoice.MstMua;
             existing.Dvtte = invoice.Dvtte;
+            existing.ProviderTaxCode = invoice.ProviderTaxCode;
+            existing.TvanTaxCode = invoice.TvanTaxCode;
 
             // Nếu trạng thái hóa đơn thay đổi sau khi đồng bộ lại thì reset XML để lần tải sau biết phải tải lại.
             if (oldStatus is 1 or 2 && oldTthai != existing.Tthai)

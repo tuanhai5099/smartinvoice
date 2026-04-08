@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SmartInvoice.Application.Services;
 using SmartInvoice.Core.Domain;
 using SmartInvoice.Core.Repositories;
+using SmartInvoice.Infrastructure.Serialization;
 
 namespace SmartInvoice.Infrastructure.Services.Pdf;
 
@@ -16,6 +17,7 @@ public sealed class InvoicePdfService : IInvoicePdfService
     private readonly IInvoicePdfProviderResolver _providerResolver;
     private readonly IUnitOfWork _uow;
     private readonly IInvoiceXmlPreparationService _xmlPreparationService;
+    private readonly IProviderDomainDiscoveryService _providerDomainDiscovery;
     private readonly ILogger _logger;
 
     public InvoicePdfService(
@@ -23,12 +25,14 @@ public sealed class InvoicePdfService : IInvoicePdfService
         IInvoicePdfProviderResolver providerResolver,
         IUnitOfWork uow,
         IInvoiceXmlPreparationService xmlPreparationService,
+        IProviderDomainDiscoveryService providerDomainDiscovery,
         ILoggerFactory loggerFactory)
     {
         _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
         _providerResolver = providerResolver ?? throw new ArgumentNullException(nameof(providerResolver));
         _uow = uow ?? throw new ArgumentNullException(nameof(uow));
         _xmlPreparationService = xmlPreparationService ?? throw new ArgumentNullException(nameof(xmlPreparationService));
+        _providerDomainDiscovery = providerDomainDiscovery ?? throw new ArgumentNullException(nameof(providerDomainDiscovery));
         _logger = loggerFactory.CreateLogger(nameof(InvoicePdfService));
     }
 
@@ -92,10 +96,36 @@ public sealed class InvoicePdfService : IInvoicePdfService
 
         var json = invoice.PayloadJson;
         var providerKey = GetProviderKeyFromPayload(json);
-        if (IsEasyInvoiceProvider(json))
-            providerKey = EasyInvoiceProviderKey;
-        var ctx = new InvoiceContentContext(json, json, invoice.NbMst, providerKey);
-        return _orchestrator.ResolveLookup(ctx);
+        var ctx = new InvoiceContentContext(json, json, invoice.NbMst, providerKey, companyId);
+        var suggestion = _orchestrator.ResolveLookup(ctx);
+        if (suggestion == null)
+            return null;
+
+        var providerForDiscovery = suggestion.ProviderTaxCode ?? providerKey ?? invoice.ProviderTaxCode;
+        var sellerForDiscovery = suggestion.SellerTaxCode ?? invoice.NbMst;
+        if (!string.IsNullOrWhiteSpace(providerForDiscovery) &&
+            !string.IsNullOrWhiteSpace(sellerForDiscovery))
+        {
+            var discovery = await _providerDomainDiscovery
+                .ResolveAsync(companyId, providerForDiscovery, sellerForDiscovery, cancellationToken)
+                .ConfigureAwait(false);
+            if (discovery.Found && !string.IsNullOrWhiteSpace(discovery.SearchUrl))
+                return suggestion with
+                {
+                    SearchUrl = discovery.SearchUrl,
+                    RequiresDomainInput = false,
+                    ProviderTaxCode = providerForDiscovery,
+                    SellerTaxCode = sellerForDiscovery
+                };
+            if (discovery.RequiresUserInput)
+                return suggestion with
+                {
+                    RequiresDomainInput = true,
+                    ProviderTaxCode = providerForDiscovery,
+                    SellerTaxCode = sellerForDiscovery
+                };
+        }
+        return suggestion;
     }
 
     public Task<InvoicePdfResult> GetPdfForInvoiceAsync(string payloadJson, CancellationToken cancellationToken = default)
@@ -104,10 +134,25 @@ public sealed class InvoicePdfService : IInvoicePdfService
             return Task.FromResult<InvoicePdfResult>(new InvoicePdfResult.Failure("Payload hóa đơn trống."));
 
         var providerKey = GetProviderKeyFromPayload(payloadJson);
-        if (IsEasyInvoiceProvider(payloadJson))
-            providerKey = EasyInvoiceProviderKey;
-        var ctx = new InvoiceContentContext(payloadJson, payloadJson, null, providerKey);
+        var ctx = new InvoiceContentContext(payloadJson, payloadJson, null, providerKey, null);
         return _orchestrator.AcquirePdfAsync(ctx, cancellationToken);
+    }
+
+    public Task SaveProviderDomainOverrideAsync(
+        Guid companyId,
+        string providerTaxCode,
+        string sellerTaxCode,
+        string searchUrl,
+        string? providerName = null,
+        CancellationToken cancellationToken = default)
+    {
+        return _providerDomainDiscovery.SaveOverrideAsync(
+            companyId,
+            providerTaxCode,
+            sellerTaxCode,
+            searchUrl,
+            providerName,
+            cancellationToken);
     }
 
     private async Task<InvoiceContentContext?> TryBuildContentForPdfAsync(
@@ -117,9 +162,7 @@ public sealed class InvoicePdfService : IInvoicePdfService
         CancellationToken cancellationToken)
     {
         var json = invoice.PayloadJson!;
-        var providerKey = GetProviderKeyFromPayload(json);
-        if (IsEasyInvoiceProvider(json))
-            providerKey = EasyInvoiceProviderKey;
+        var providerKey = metadata.ProviderTaxCode ?? GetProviderKeyFromPayload(json) ?? invoice.ProviderTaxCode;
         var xmlPreparation = await _xmlPreparationService
             .PrepareXmlForInvoiceAsync(companyId, invoice, cancellationToken)
             .ConfigureAwait(false);
@@ -137,6 +180,7 @@ public sealed class InvoicePdfService : IInvoicePdfService
                 json,
                 invoice.NbMst,
                 providerKey,
+                companyId,
                 InvoiceFetcherContentKind.Xml,
                 false,
                 null);
@@ -145,35 +189,14 @@ public sealed class InvoicePdfService : IInvoicePdfService
         var failureReason = string.IsNullOrWhiteSpace(xmlPreparation.FailureReason)
             ? "Không tìm thấy XML"
             : xmlPreparation.FailureReason;
-        if (metadata.RequiresXml)
-        {
-            _logger.LogWarning(
-                "PDF XML-first: provider yêu cầu XML nhưng chuẩn bị XML thất bại cho invoice {ExternalId}. Provider={ProviderTaxCode}, Fetcher={FetcherType}, Reason={Reason}",
-                invoice.ExternalId,
-                metadata.ProviderTaxCode ?? providerKey ?? "(null)",
-                metadata.FetcherTypeName ?? "(unknown)",
-                failureReason);
-            return null;
-        }
-
         _logger.LogInformation(
-            "PDF XML-first: fallback JSON cho invoice {ExternalId}. Provider={ProviderTaxCode}, Fetcher={FetcherType}, XmlReason={Reason}",
+            "PDF XML-first: từ chối fallback JSON cho invoice {ExternalId}. Provider={ProviderTaxCode}, Fetcher={FetcherType}, XmlReason={Reason}",
             invoice.ExternalId,
             metadata.ProviderTaxCode ?? providerKey ?? "(null)",
             metadata.FetcherTypeName ?? "(unknown)",
             failureReason);
-
-        return new InvoiceContentContext(
-            json,
-            json,
-            invoice.NbMst,
-            providerKey,
-            InvoiceFetcherContentKind.Json,
-            true,
-            failureReason);
+        return null;
     }
-
-    private const string EasyInvoiceProviderKey = "0105987432";
 
     private static string? GetProviderKeyFromPayload(string payloadJson)
     {
@@ -183,13 +206,19 @@ public sealed class InvoicePdfService : IInvoicePdfService
             using var doc = JsonDocument.Parse(payloadJson);
             var root = doc.RootElement;
             var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-
-            foreach (var prop in r.EnumerateObject())
+            foreach (var candidate in GetProviderRootCandidates(r))
             {
-                if (string.Equals(prop.Name, "msttcgp", StringComparison.OrdinalIgnoreCase))
+                if (candidate.ValueKind != JsonValueKind.Object)
+                    continue;
+                foreach (var prop in candidate.EnumerateObject())
                 {
-                    var s = prop.Value.GetString();
-                    if (!string.IsNullOrWhiteSpace(s)) return s.Trim();
+                    if (!string.Equals(prop.Name, "msttcgp", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(prop.Name, "tvanDnKntt", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(prop.Name, "tvandnkntt", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var s = JsonTaxFieldReader.CoerceToTrimmedString(prop.Value);
+                    if (!string.IsNullOrWhiteSpace(s))
+                        return s;
                 }
             }
             return null;
@@ -200,82 +229,21 @@ public sealed class InvoicePdfService : IInvoicePdfService
         }
     }
 
-    private static bool IsEasyInvoiceProvider(string payloadJson)
+    private static IEnumerable<JsonElement> GetProviderRootCandidates(JsonElement r)
     {
-        try
+        yield return r;
+        if (r.ValueKind != JsonValueKind.Object) yield break;
+
+        if (r.TryGetProperty("ndhdon", out var ndhdon) && ndhdon.ValueKind == JsonValueKind.Object)
+            yield return ndhdon;
+        if (r.TryGetProperty("hdon", out var hdon) && hdon.ValueKind == JsonValueKind.Object)
+            yield return hdon;
+        if (r.TryGetProperty("data", out var data))
         {
-            using var doc = JsonDocument.Parse(payloadJson);
-            var root = doc.RootElement;
-            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-
-            string? portalLink = null;
-
-            if (r.TryGetProperty("cttkhac", out var cttkhac) && cttkhac.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in cttkhac.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-                    if (!item.TryGetProperty("ttruong", out var tt) || tt.ValueKind != JsonValueKind.String) continue;
-                    var ttStr = tt.GetString();
-                    if (string.IsNullOrWhiteSpace(ttStr)) continue;
-                    if (!string.Equals(ttStr.Trim(), "PortalLink", StringComparison.OrdinalIgnoreCase)) continue;
-
-                    var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                        : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                    if (!string.IsNullOrWhiteSpace(raw))
-                    {
-                        portalLink = raw.Trim();
-                        break;
-                    }
-                }
-            }
-
-            if (portalLink == null && r.TryGetProperty("ttkhac", out var ttkhac) && ttkhac.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in ttkhac.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-                    if (item.TryGetProperty("ttruong", out var tt) && tt.ValueKind == JsonValueKind.String)
-                    {
-                        var ttStr = tt.GetString();
-                        if (!string.IsNullOrWhiteSpace(ttStr) &&
-                            string.Equals(ttStr.Trim(), "PortalLink", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var raw = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                                : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                            if (!string.IsNullOrWhiteSpace(raw))
-                            {
-                                portalLink = raw.Trim();
-                                break;
-                            }
-                        }
-                    }
-
-                    if (portalLink != null) break;
-
-                    if (item.TryGetProperty("ttchung", out var ttchung) && ttchung.ValueKind == JsonValueKind.Object)
-                    {
-                        if (ttchung.TryGetProperty("PortalLink", out var p) && p.ValueKind == JsonValueKind.String)
-                        {
-                            var s = p.GetString();
-                            if (!string.IsNullOrWhiteSpace(s))
-                            {
-                                portalLink = s.Trim();
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(portalLink)) return false;
-            var link = portalLink.Trim();
-            return link.Contains("easyinvoice.vn", StringComparison.OrdinalIgnoreCase)
-                   || link.Contains("easy-invoice.com", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
+            if (data.ValueKind == JsonValueKind.Object)
+                yield return data;
+            else if (data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0)
+                yield return data[0];
         }
     }
 

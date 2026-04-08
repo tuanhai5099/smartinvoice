@@ -15,7 +15,11 @@ public interface IInvoicePdfFetcher
     /// <returns>Kết quả: Success với PDF bytes và tên file gợi ý, hoặc Failure với thông báo lỗi.</returns>
     Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default);
 
-    /// <summary>Tải PDF dùng đúng <see cref="InvoiceContentContext.ContentForFetcher"/> (JSON hoặc XML).</summary>
+    /// <summary>
+    /// Mặc định gọi <see cref="FetchPdfAsync(string, CancellationToken)"/> với <see cref="InvoiceContentContext.ContentForFetcher"/>.
+    /// Fetcher chỉ hiểu JSON (cttkhac, …) phải override và truyền JSON từ <see cref="InvoiceContentContext.InvoiceJsonPayload"/>
+    /// qua <see cref="InvoicePayloadJsonAccessor.TryGetInvoiceJsonForPortalFields"/> — khi PDF XML-first, <see cref="InvoiceContentContext.ContentForFetcher"/> là XML.
+    /// </summary>
     Task<InvoicePdfResult> AcquirePdfAsync(InvoiceContentContext context, CancellationToken cancellationToken = default) =>
         FetchPdfAsync(context.ContentForFetcher, cancellationToken);
 }

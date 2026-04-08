@@ -22,6 +22,7 @@
         <conv:PdfStateIconConverter x:Key="PdfStateIconConverter" />
         <conv:InvoiceSymbolDisplayConverter x:Key="InvoiceSymbolDisplayConverter" />
         <conv:UrlToShortDisplayConverter x:Key="UrlToShortDisplayConverter" />
+        <conv:InverseBooleanConverter x:Key="InverseBool" />
 
         <!-- Style chung cho ComboBox bộ lọc: hiển thị rõ text được chọn -->
         <Style x:Key="SiFilterComboBoxStyle" TargetType="ComboBox">
@@ -1443,14 +1444,14 @@
                                    FontSize="12"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource SiTextPrimary}" />
-                        <TextBox Text="{Binding LookupSearchUrl, Converter={StaticResource UrlToShortDisplayConverter}}"
-                                 IsReadOnly="True"
-                                 Margin="0,2,0,0"
-                                 FontSize="12" />
+                        <TextBox Margin="0,2,0,0"
+                                 FontSize="12"
+                                 Text="{Binding LookupSearchUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 IsReadOnly="{Binding LookupRequiresDomainInput, Converter={StaticResource InverseBool}}" />
                     </StackPanel>
 
                     <StackPanel Margin="0,0,0,10">
-                        <TextBlock Text="Mã số bí mật / Mã tra cứu (mccqt)"
+                        <TextBlock Text="Mã tra cứu"
                                    FontSize="12"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource SiTextPrimary}" />
@@ -1473,7 +1474,7 @@
 
                     <StackPanel Margin="0,0,0,10"
                                 Visibility="{Binding LookupProviderTaxCode, Converter={StaticResource NonEmptyStrToVis}}">
-                        <TextBlock Text="MST nhà cung cấp dịch vụ (msttcgp)"
+                        <TextBlock Text="MST nhà cung cấp dịch vụ"
                                    FontSize="12"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource SiTextPrimary}" />
@@ -1493,6 +1494,13 @@
                                    Margin="0,0,8,0"
                                    Command="{Binding OpenHtInvoiceAutoLookupCommand}"
                                    Visibility="{Binding IsHtInvoiceLookup, Converter={StaticResource BoolToVis}}" />
+                        <ui:Button Content="Lưu link tra cứu"
+                                   Appearance="Primary"
+                                   Padding="10,4"
+                                   FontSize="12"
+                                   Margin="0,0,8,0"
+                                   Command="{Binding SaveLookupDomainOverrideCommand}"
+                                   Visibility="{Binding LookupRequiresDomainInput, Converter={StaticResource BoolToVis}}" />
                         <ui:Button Content="Đóng"
                                    Appearance="Secondary"
                                    Padding="10,4"

@@ -25,6 +25,15 @@ public interface IInvoicePdfService
     /// Dùng để hiển thị popup "Gợi ý tra cứu" và mở trình duyệt nhúng/ngoài.
     /// </summary>
     Task<InvoiceLookupSuggestion?> GetLookupSuggestionAsync(Guid companyId, string externalId, CancellationToken cancellationToken = default);
+
+    /// <summary>Lưu cấu hình domain tra cứu theo cặp (NCC, MST người bán).</summary>
+    Task SaveProviderDomainOverrideAsync(
+        Guid companyId,
+        string providerTaxCode,
+        string sellerTaxCode,
+        string searchUrl,
+        string? providerName = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Thông tin gợi ý tra cứu hóa đơn cho một nhà cung cấp dịch vụ (descriptor bất biến).</summary>
@@ -35,4 +44,7 @@ public sealed record InvoiceLookupSuggestion(
     string? SecretCode,
     string? SellerTaxCode,
     /// <summary>MST nhà cung cấp dịch vụ hóa đơn (msttcgp) từ payload.</summary>
-    string? ProviderTaxCode = null);
+    string? ProviderTaxCode = null,
+    bool RequiresDomainInput = false,
+    /// <summary>Mã tra cứu phụ (vd. &quot;Mã công ty&quot; WinInvoice), đồng bộ với fetcher.</summary>
+    string? AuxiliaryLookupCode = null);

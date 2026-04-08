@@ -21,6 +21,7 @@ public sealed class InvoiceLookupCatalogTests
         new FastInvoiceLookupRule(),
         new HtInvoiceLookupRule(),
         new MeinvoiceInvoiceLookupRule(),
+        new VietinvoiceLookupRule(),
         new ViettelInvoiceLookupRule(),
     ];
 
@@ -29,6 +30,8 @@ public sealed class InvoiceLookupCatalogTests
         public required Func<string, InvoicePdfProviderMetadata> Metadata { get; init; }
 
         public IInvoicePdfFetcher ResolveFetcher(string payloadJson) =>
+            throw new NotSupportedException();
+        public IInvoicePdfFetcher ResolveFetcher(InvoiceContentContext context) =>
             throw new NotSupportedException();
 
         public InvoicePdfProviderMetadata ResolveMetadata(string payloadJson) => Metadata(payloadJson);
@@ -120,5 +123,58 @@ public sealed class InvoiceLookupCatalogTests
         var catalog = CreateCatalog(resolver);
         var ctx = new InvoiceContentContext("", "", null, null);
         Assert.Null(catalog.Resolve(ctx));
+    }
+
+    [Fact]
+    public void Resolve_WinInvoicePayload_ReturnsSecretAndAuxiliaryCompanyKey()
+    {
+        var resolver = new StubResolver
+        {
+            Metadata = _ => new InvoicePdfProviderMetadata(
+                "0312303803",
+                false,
+                false,
+                "0312303803",
+                "0104918404",
+                "0104918404",
+                "WinInvoicePdfFetcher")
+        };
+        var catalog = CreateCatalog(resolver);
+        const string json = """
+            [{"nbmst":"0104918404","cttkhac":[
+              {"ttruong":"Mã tra cứu hóa đơn","dlieu":"PCODE"},
+              {"ttruong":"Mã công ty","dlieu":"COMPANY"}]}]
+            """;
+        var ctx = new InvoiceContentContext(json, json, "0104918404", "0312303803");
+        var s = catalog.Resolve(ctx);
+        Assert.NotNull(s);
+        Assert.Equal("PCODE", s.SecretCode);
+        Assert.Equal("COMPANY", s.AuxiliaryLookupCode);
+    }
+
+    [Fact]
+    public void Resolve_VietinvoicePayload_ReturnsVietinvoiceSuggestion()
+    {
+        var resolver = new StubResolver
+        {
+            Metadata = _ => new InvoicePdfProviderMetadata(
+                "0106870211",
+                false,
+                false,
+                "0106870211",
+                "0317098812",
+                "0106870211",
+                "VietinvoiceInvoicePdfFetcher")
+        };
+        var catalog = CreateCatalog(resolver);
+        const string json = """
+            [{"cttkhac":[{"ttruong":"Mã tra cứu","dlieu":"WB4C4K99Q01I"}]}]
+            """;
+        var ctx = new InvoiceContentContext(json, json, "0317098812", "0106870211");
+        var s = catalog.Resolve(ctx);
+        Assert.NotNull(s);
+        Assert.Equal("0106870211", s.ProviderKey);
+        Assert.Equal("WB4C4K99Q01I", s.SecretCode);
+        Assert.Contains("tracuuhoadon.vietinvoice.vn", s.SearchUrl, StringComparison.OrdinalIgnoreCase);
     }
 }

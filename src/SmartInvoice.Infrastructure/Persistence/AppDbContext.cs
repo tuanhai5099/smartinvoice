@@ -10,6 +10,7 @@ public class AppDbContext : DbContext
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
+    public DbSet<ProviderDomainMapping> ProviderDomainMappings => Set<ProviderDomainMapping>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -62,6 +63,16 @@ public class AppDbContext : DbContext
             e.Property(x => x.Status).HasConversion<int>();
             e.HasIndex(x => new { x.Status, x.CreatedAt });
             e.HasIndex(x => x.CompanyId);
+        });
+
+        modelBuilder.Entity<ProviderDomainMapping>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.ProviderTaxCode).HasMaxLength(32).IsRequired();
+            e.Property(x => x.SellerTaxCode).HasMaxLength(32).IsRequired();
+            e.Property(x => x.SearchUrl).HasMaxLength(2048).IsRequired();
+            e.Property(x => x.ProviderName).HasMaxLength(128);
+            e.HasIndex(x => new { x.CompanyId, x.ProviderTaxCode, x.SellerTaxCode }).IsUnique();
         });
 
         modelBuilder.HasDbFunction(

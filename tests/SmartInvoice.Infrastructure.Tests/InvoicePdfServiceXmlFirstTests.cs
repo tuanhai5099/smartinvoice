@@ -53,7 +53,7 @@ public sealed class InvoicePdfServiceXmlFirstTests
     }
 
     [Fact]
-    public async Task GetPdfByExternalId_FallbacksToJson_WhenXmlPreparationFails_AndProviderNotRequireXml()
+    public async Task GetPdfByExternalId_FailsEarly_WhenXmlPreparationFails_EvenProviderNotRequireXml()
     {
         var orchestrator = new StubOrchestrator(new InvoicePdfResult.Success([5], "c.pdf"));
         var resolver = new StubResolver(requiresXml: false);
@@ -65,12 +65,8 @@ public sealed class InvoicePdfServiceXmlFirstTests
         var service = CreateService(orchestrator, resolver, xmlPrep);
 
         var result = await service.GetPdfForInvoiceByExternalIdAsync(CompanyId, "inv-1");
-
-        Assert.IsType<InvoicePdfResult.Success>(result);
-        Assert.NotNull(orchestrator.LastContext);
-        Assert.Equal(InvoiceFetcherContentKind.Json, orchestrator.LastContext!.ContentKind);
-        Assert.True(orchestrator.LastContext.UsedJsonFallbackAfterXmlFailure);
-        Assert.Equal("API timeout", orchestrator.LastContext.XmlPreparationFailureReason);
+        Assert.IsType<InvoicePdfResult.Failure>(result);
+        Assert.Null(orchestrator.LastContext);
     }
 
     [Fact]
@@ -119,6 +115,7 @@ public sealed class InvoicePdfServiceXmlFirstTests
             resolver,
             uow,
             xmlPreparationService,
+            new StubProviderDomainDiscoveryService(),
             NullLoggerFactory.Instance);
     }
 
@@ -127,6 +124,7 @@ public sealed class InvoicePdfServiceXmlFirstTests
         private readonly bool _requiresXml;
         public StubResolver(bool requiresXml) => _requiresXml = requiresXml;
         public IInvoicePdfFetcher ResolveFetcher(string payloadJson) => throw new NotSupportedException();
+        public IInvoicePdfFetcher ResolveFetcher(InvoiceContentContext context) => throw new NotSupportedException();
         public InvoicePdfProviderMetadata ResolveMetadata(string payloadJson) =>
             new("0100109106", false, _requiresXml, "0100109106", "0102030405", "0100109106", "StubFetcher");
     }
@@ -164,6 +162,7 @@ public sealed class InvoicePdfServiceXmlFirstTests
         public ICompanyRepository Companies { get; }
         public IInvoiceRepository Invoices { get; }
         public IBackgroundJobRepository BackgroundJobs { get; }
+        public IProviderDomainMappingRepository ProviderDomainMappings { get; } = new StubProviderDomainMappingRepository();
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => Task.FromResult(0);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
@@ -204,5 +203,20 @@ public sealed class InvoicePdfServiceXmlFirstTests
         public Task<BackgroundJob> AddAsync(BackgroundJob job, CancellationToken cancellationToken = default) => Task.FromResult(job);
         public Task UpdateAsync(BackgroundJob job, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task DeleteAsync(Guid id, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class StubProviderDomainDiscoveryService : IProviderDomainDiscoveryService
+    {
+        public Task<ProviderDomainDiscoveryResult> ResolveAsync(Guid companyId, string providerTaxCode, string sellerTaxCode, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ProviderDomainDiscoveryResult(false, null, false, null));
+        public Task SaveOverrideAsync(Guid companyId, string providerTaxCode, string sellerTaxCode, string searchUrl, string? providerName = null, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class StubProviderDomainMappingRepository : IProviderDomainMappingRepository
+    {
+        public Task<Core.Domain.ProviderDomainMapping?> GetActiveAsync(Guid companyId, string providerTaxCode, string sellerTaxCode, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Core.Domain.ProviderDomainMapping?>(null);
+        public Task UpsertAsync(Core.Domain.ProviderDomainMapping mapping, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

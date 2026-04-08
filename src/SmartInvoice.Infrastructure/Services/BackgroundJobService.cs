@@ -27,6 +27,8 @@ public class BackgroundJobService : IBackgroundJobService
     private readonly IBackgroundJobCompletedNotifier? _notifier;
     private readonly IBackgroundJobLiveProgressNotifier? _liveProgress;
     private readonly IInvoicePdfProviderResolver _pdfProviderResolver;
+    private readonly IInvoiceStoragePathPolicy _storagePathPolicy;
+    private readonly IInvoiceFilePackagingService _filePackagingService;
     private readonly ILogger _logger;
 
     private readonly object _workerStartLock = new();
@@ -45,6 +47,8 @@ public class BackgroundJobService : IBackgroundJobService
         IInvoicePdfService invoicePdfService,
         IScoSyncRecoveryPlanner scoRecoveryPlanner,
         IInvoicePdfProviderResolver pdfProviderResolver,
+        IInvoiceStoragePathPolicy storagePathPolicy,
+        IInvoiceFilePackagingService filePackagingService,
         ILoggerFactory loggerFactory,
         IBackgroundJobCompletedNotifier? notifier = null,
         IBackgroundJobLiveProgressNotifier? liveProgress = null)
@@ -57,6 +61,8 @@ public class BackgroundJobService : IBackgroundJobService
         _invoicePdfService = invoicePdfService;
         _scoRecoveryPlanner = scoRecoveryPlanner;
         _pdfProviderResolver = pdfProviderResolver;
+        _storagePathPolicy = storagePathPolicy;
+        _filePackagingService = filePackagingService;
         _notifier = notifier;
         _liveProgress = liveProgress;
         _logger = loggerFactory.CreateLogger<BackgroundJobService>();
@@ -309,7 +315,7 @@ public class BackgroundJobService : IBackgroundJobService
                 if (source.Type == BackgroundJobType.DownloadInvoices && source.DownloadXml)
                 {
                     var code = company.CompanyCode ?? company.CompanyName ?? company.TaxCode ?? source.CompanyId.ToString("N")[..8];
-                    var xmlRoot = InvoiceFileStoragePathHelper.GetCompanyXmlRootPath(code);
+                    var xmlRoot = _storagePathPolicy.GetCompanyXmlRoot(code);
                     return await EnqueueDownloadXmlBulkAsync(
                         new BulkDownloadCreateDto(source.CompanyId, source.IsSold, distinctIds, xmlRoot),
                         cancellationToken).ConfigureAwait(false);
@@ -673,15 +679,16 @@ public class BackgroundJobService : IBackgroundJobService
             var company = await _companyService.GetByIdAsync(job.CompanyId, cancellationToken).ConfigureAwait(false);
             var companyCode = company?.CompanyCode ?? company?.CompanyName ?? company?.TaxCode ?? job.CompanyId.ToString("N")[..8];
             // XML từng HĐ: Documents\SmartInvoice\{công ty}\XML\yyyy_MM\ (đồng bộ với UI danh sách hóa đơn).
-            var xmlRoot = InvoiceFileStoragePathHelper.GetCompanyXmlRootPath(companyCode);
+            var xmlRoot = _storagePathPolicy.GetCompanyXmlRoot(companyCode);
             Directory.CreateDirectory(xmlRoot);
             // ZIP gom nhanh: cùng cấp thư mục XML (thư mục công ty), không nằm trong XML\.
-            var companyRoot = InvoiceFileStoragePathHelper.GetCompanyRootPath(companyCode);
+            var companyRoot = _storagePathPolicy.GetCompanyRoot(companyCode);
             Directory.CreateDirectory(companyRoot);
             companyCodeForFiles = companyCode;
             companyRootForFiles = companyRoot;
 
             // Không gọi UpdateAsync từ callback Progress: EF không cho nhiều thao tác đồng thời trên cùng DbContext (jobUow).
+            var xmlNoXmlIds = new List<string>();
             var progress = new Progress<DownloadXmlProgress>(p =>
             {
                 job.ProgressCurrent = 1 + p.Current;
@@ -698,6 +705,14 @@ public class BackgroundJobService : IBackgroundJobService
                             xmlFailMessages.TryAdd(ext, "Tải file XML thất bại.");
                     }
                 }
+                else if (p.ItemResult is { Success: false, NoXml: true, ExternalInvoiceId: { Length: > 0 } noXmlExt })
+                {
+                    lock (xmlFailedLock)
+                    {
+                        xmlNoXmlIds.Add(noXmlExt);
+                        xmlFailMessages.TryAdd(noXmlExt, "Không có chi tiết XML.");
+                    }
+                }
             });
 
             var downloadResult = await _invoiceSyncService.DownloadInvoicesXmlAsync(job.CompanyId, page, xmlRoot, progress, cancellationToken, zipOutputDirectory: companyRoot)
@@ -711,7 +726,10 @@ public class BackgroundJobService : IBackgroundJobService
             else if (downloadResult.DownloadedCount > 0)
                 job.ResultPath = xmlRoot;
             job.ProgressCurrent = job.ProgressTotal;
-            var distinctXml = xmlFailedIds.Distinct(StringComparer.Ordinal).ToList();
+            var distinctXml = xmlFailedIds
+                .Concat(xmlNoXmlIds)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
             failureSummary.XmlFailedIds.AddRange(distinctXml);
             if (distinctXml.Count > 0)
             {
@@ -743,7 +761,7 @@ public class BackgroundJobService : IBackgroundJobService
             {
                 var companyP = await _companyService.GetByIdAsync(job.CompanyId, cancellationToken).ConfigureAwait(false);
                 companyCodeForFiles = companyP?.CompanyCode ?? companyP?.CompanyName ?? companyP?.TaxCode ?? job.CompanyId.ToString("N")[..8];
-                companyRootForFiles = InvoiceFileStoragePathHelper.GetCompanyRootPath(companyCodeForFiles);
+                companyRootForFiles = _storagePathPolicy.GetCompanyRoot(companyCodeForFiles);
                 Directory.CreateDirectory(companyRootForFiles);
             }
 
@@ -963,12 +981,13 @@ public class BackgroundJobService : IBackgroundJobService
         }
         var company = await _companyService.GetByIdAsync(job.CompanyId, cancellationToken).ConfigureAwait(false);
         var companyCode = company?.CompanyCode ?? company?.CompanyName ?? company?.TaxCode ?? job.CompanyId.ToString("N")[..8];
-        var companyRoot = InvoiceFileStoragePathHelper.GetCompanyRootPath(companyCode);
+        var companyRoot = _storagePathPolicy.GetCompanyRoot(companyCode);
         var invoices = await _invoiceSyncService.GetInvoicesByIdsAsync(job.CompanyId, payload.InvoiceIds, cancellationToken).ConfigureAwait(false);
         job.XmlTotal = invoices.Count;
         var xmlFailedLock = new object();
         var xmlFailedIds = new List<string>();
         var xmlFailMessages = new Dictionary<string, string>(StringComparer.Ordinal);
+        var xmlNoXmlIds = new List<string>();
         var progress = new Progress<DownloadXmlProgress>(p =>
         {
             job.ProgressCurrent = p.Current;
@@ -984,6 +1003,14 @@ public class BackgroundJobService : IBackgroundJobService
                         xmlFailMessages.TryAdd(ext, "Tải file XML thất bại.");
                 }
             }
+            else if (p.ItemResult is { Success: false, NoXml: true, ExternalInvoiceId: { Length: > 0 } noXmlExt })
+            {
+                lock (xmlFailedLock)
+                {
+                    xmlNoXmlIds.Add(noXmlExt);
+                    xmlFailMessages.TryAdd(noXmlExt, "Không có chi tiết XML.");
+                }
+            }
             _liveProgress?.ReportBulkXmlProgress(job.Id, p);
         });
         var result = await _invoiceSyncService.DownloadInvoicesXmlAsync(job.CompanyId, invoices, payload.ExportXmlFolderPath, progress, cancellationToken, zipOutputDirectory: companyRoot).ConfigureAwait(false);
@@ -995,7 +1022,10 @@ public class BackgroundJobService : IBackgroundJobService
             job.ResultPath = result.ZipPath;
         else if (result.DownloadedCount > 0 && !string.IsNullOrWhiteSpace(payload.ExportXmlFolderPath))
             job.ResultPath = payload.ExportXmlFolderPath.Trim();
-        var distinctXmlFailed = xmlFailedIds.Distinct(StringComparer.Ordinal).ToList();
+        var distinctXmlFailed = xmlFailedIds
+            .Concat(xmlNoXmlIds)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
         if (distinctXmlFailed.Count > 0)
         {
             var byId = invoices.ToDictionary(i => i.Id, StringComparer.Ordinal);
@@ -1033,7 +1063,7 @@ public class BackgroundJobService : IBackgroundJobService
 
         var company = await _companyService.GetByIdAsync(job.CompanyId, cancellationToken).ConfigureAwait(false);
         var companyCode = company?.CompanyCode ?? company?.CompanyName ?? company?.TaxCode ?? job.CompanyId.ToString("N")[..8];
-        var companyRoot = InvoiceFileStoragePathHelper.GetCompanyRootPath(companyCode);
+        var companyRoot = _storagePathPolicy.GetCompanyRoot(companyCode);
         var entities = await jobUow.Invoices.GetByCompanyAndExternalIdsAsync(job.CompanyId, payload.InvoiceIds, cancellationToken).ConfigureAwait(false);
         var orderMap = payload.InvoiceIds
             .Select((id, idx) => (id, idx))
@@ -1105,7 +1135,7 @@ public class BackgroundJobService : IBackgroundJobService
 
             try
             {
-                var pdfPath = InvoiceFileStoragePathHelper.GetInvoicePdfPath(companyCode, inv.KyHieu, inv.SoHoaDon, inv.NgayLap);
+                var pdfPath = _storagePathPolicy.GetInvoicePdfPath(companyCode, inv.KyHieu, inv.SoHoaDon, inv.NgayLap);
                 var pdfFolder = Path.GetDirectoryName(pdfPath);
                 if (!string.IsNullOrEmpty(pdfFolder))
                     Directory.CreateDirectory(pdfFolder);
@@ -1205,23 +1235,12 @@ public class BackgroundJobService : IBackgroundJobService
         {
             try
             {
-                var zipName = $"HoaDonPdf_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
-                var zipPath = Path.Combine(companyRoot, zipName);
-                if (File.Exists(zipPath)) File.Delete(zipPath);
-                using (var zipStream = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                using (var zip = new System.IO.Compression.ZipArchive(zipStream, System.IO.Compression.ZipArchiveMode.Create))
-                {
-                    foreach (var pdfPath in savedPdfPaths)
-                    {
-                        if (!File.Exists(pdfPath)) continue;
-                        var entryName = Path.GetFileName(pdfPath);
-                        var entry = zip.CreateEntry(entryName, System.IO.Compression.CompressionLevel.Optimal);
-                        await using (var entryStream = entry.Open())
-                        await using (var fileStream = File.OpenRead(pdfPath))
-                            await fileStream.CopyToAsync(entryStream, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                job.ResultPath = zipPath;
+                var zipNameWithoutExtension = $"HoaDonPdf_{DateTime.Now:yyyyMMdd_HHmmss}";
+                var zipPath = await _filePackagingService
+                    .CreateZipFromFilesAsync(savedPdfPaths, companyRoot, zipNameWithoutExtension, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(zipPath))
+                    job.ResultPath = zipPath;
             }
             catch (Exception ex)
             {

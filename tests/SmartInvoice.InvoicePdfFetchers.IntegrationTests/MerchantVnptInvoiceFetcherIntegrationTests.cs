@@ -35,7 +35,7 @@ public sealed class MerchantVnptInvoiceFetcherIntegrationTests
             builder.SetMinimumLevel(LogLevel.Information);
         });
 
-        var fetcher = new MerchantVnptInvoiceFetcher(loggerFactory);
+        var fetcher = new MerchantVnptInvoiceFetcher(new StubProviderDomainDiscoveryService(), loggerFactory);
 
         var result = await fetcher.FetchPdfAsync(TestPayloadJson);
 
@@ -51,5 +51,14 @@ public sealed class MerchantVnptInvoiceFetcherIntegrationTests
         var header = System.Text.Encoding.ASCII.GetString(success.PdfBytes.AsSpan(0, Math.Min(5, success.PdfBytes.Length)));
         Assert.Equal("%PDF-", header);
     }
+}
+
+file sealed class StubProviderDomainDiscoveryService : IProviderDomainDiscoveryService
+{
+    public Task<ProviderDomainDiscoveryResult> ResolveAsync(Guid companyId, string providerTaxCode, string sellerTaxCode, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new ProviderDomainDiscoveryResult(false, null, false, null));
+
+    public Task SaveOverrideAsync(Guid companyId, string providerTaxCode, string sellerTaxCode, string searchUrl, string? providerName = null, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
 }
 

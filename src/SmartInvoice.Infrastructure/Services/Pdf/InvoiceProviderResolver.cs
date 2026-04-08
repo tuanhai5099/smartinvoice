@@ -1,8 +1,11 @@
 using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
 using SmartInvoice.Application.Services;
 using SmartInvoice.InvoicePdfFetchers;
+using SmartInvoice.Infrastructure.Serialization;
 
 namespace SmartInvoice.Infrastructure.Services.Pdf;
 
@@ -25,6 +28,7 @@ public interface IInvoicePdfProviderResolver
     /// Chọn fetcher phù hợp cho payload JSON. Nếu không tìm được thì trả về fallback fetcher.
     /// </summary>
     IInvoicePdfFetcher ResolveFetcher(string payloadJson);
+    IInvoicePdfFetcher ResolveFetcher(InvoiceContentContext context);
 
     /// <summary>Cùng quy tắc match với <see cref="ResolveFetcher"/>; dùng cho gợi ý tra cứu và phân loại can thiệp người dùng.</summary>
     InvoicePdfProviderMetadata ResolveMetadata(string payloadJson);
@@ -32,8 +36,10 @@ public interface IInvoicePdfProviderResolver
 
 /// <summary>
 /// Resolver trung tâm: đọc attribute trên các fetcher để build cấu hình provider,
-/// sau đó chọn fetcher theo msttcgp (provider key), nbmst (MST người bán) hoặc pattern JSON.
-/// Hiện tại pattern JSON vẫn dùng logic cũ; sau này có thể mở rộng JsonMatcher riêng.
+/// rồi chọn fetcher theo thứ tự cố định:
+/// (1) nbmst (MST người bán) — nếu có bản ghi <see cref="InvoiceProviderMatchKind.SellerTaxCode"/> thì dùng trước;
+/// (2) msttcgp / TVAN (MST nhà cung cấp dịch vụ) — <see cref="InvoiceProviderMatchKind.ProviderTaxCode"/>.
+/// Chuẩn hóa MST khi so khớp phải khớp với <see cref="InvoicePdfFetcherRegistry"/> (trim, hậu tố chi nhánh sau '-', bỏ số 0 đầu nếu toàn chữ số).
 /// </summary>
 public sealed class InvoicePdfProviderResolver : IInvoicePdfProviderResolver
 {
@@ -52,29 +58,56 @@ public sealed class InvoicePdfProviderResolver : IInvoicePdfProviderResolver
 
     public IInvoicePdfFetcher ResolveFetcher(string payloadJson)
     {
+        if (InvoicePayloadRouting.IsEasyInvoiceProvider(payloadJson))
+            return _registry.GetFetcher(InvoicePayloadRouting.EasyInvoiceProviderKey);
+
         var (providerKey, sellerTaxCode) = ParsePayloadKeys(payloadJson);
         var cfg = MatchConfig(providerKey, sellerTaxCode);
         if (cfg != null)
         {
             _logger.LogDebug("Resolved PDF provider → {Fetcher} (key={Key}).", cfg.FetcherType.Name, cfg.Key);
-            if (cfg.MatchKind == InvoiceProviderMatchKind.SellerTaxCode)
-                return _registry.GetFetcher(cfg.Key);
-            return _registry.GetFetcher(providerKey);
+            return _registry.GetFetcher(cfg.Key);
         }
 
         _logger.LogDebug("PDF provider resolver falling back to registry by providerKey='{Key}'.", providerKey ?? "(null)");
         return _registry.GetFetcher(providerKey);
     }
 
+    public IInvoicePdfFetcher ResolveFetcher(InvoiceContentContext context)
+    {
+        if (context.ContentKind == InvoiceFetcherContentKind.Xml)
+        {
+            var (providerKey, sellerTaxCode) = ParseXmlKeys(context.ContentForFetcher);
+            var cfg = MatchConfig(sellerTaxCode: sellerTaxCode, providerKey: providerKey) ??
+                      MatchConfig(context.ProviderTaxCode, context.SellerTaxCode);
+            if (cfg != null)
+                return _registry.GetFetcher(cfg.Key);
+        }
+
+        return ResolveFetcher(context.InvoiceJsonPayload);
+    }
+
     public InvoicePdfProviderMetadata ResolveMetadata(string payloadJson)
     {
+        if (InvoicePayloadRouting.IsEasyInvoiceProvider(payloadJson))
+        {
+            return new InvoicePdfProviderMetadata(
+                InvoicePayloadRouting.EasyInvoiceProviderKey,
+                false,
+                false,
+                InvoicePayloadRouting.EasyInvoiceProviderKey,
+                null,
+                InvoicePayloadRouting.EasyInvoiceProviderKey,
+                nameof(EasyInvoicePdfFetcher));
+        }
+
         var (providerKey, sellerTaxCode) = ParsePayloadKeys(payloadJson);
         var cfg = MatchConfig(providerKey, sellerTaxCode);
         if (cfg != null)
         {
             var lookupRegistryKey = cfg.InvoiceLookupRegistryKey
                 ?? (cfg.MatchKind == InvoiceProviderMatchKind.ProviderTaxCode ? cfg.Key : null);
-            var fetcherKey = cfg.MatchKind == InvoiceProviderMatchKind.SellerTaxCode ? cfg.Key : providerKey;
+            var fetcherKey = cfg.Key;
             return new InvoicePdfProviderMetadata(
                 lookupRegistryKey,
                 cfg.MayRequireUserIntervention,
@@ -99,20 +132,20 @@ public sealed class InvoicePdfProviderResolver : IInvoicePdfProviderResolver
     {
         if (!string.IsNullOrWhiteSpace(sellerTaxCode))
         {
-            var normalizedSeller = NormalizeSellerTaxCode(sellerTaxCode);
+            var normalizedSeller = NormalizeTaxIdentifier(sellerTaxCode);
             var bySeller = _configs.FirstOrDefault(c =>
                 c.MatchKind == InvoiceProviderMatchKind.SellerTaxCode &&
-                NormalizeSellerTaxCode(c.Key).Equals(normalizedSeller, StringComparison.OrdinalIgnoreCase));
+                NormalizeTaxIdentifier(c.Key).Equals(normalizedSeller, StringComparison.OrdinalIgnoreCase));
             if (bySeller != null)
                 return bySeller;
         }
 
         if (!string.IsNullOrWhiteSpace(providerKey))
         {
-            var normalized = NormalizeTaxCode(providerKey);
+            var normalized = NormalizeTaxIdentifier(providerKey);
             var byProvider = _configs.FirstOrDefault(c =>
                 c.MatchKind == InvoiceProviderMatchKind.ProviderTaxCode &&
-                NormalizeTaxCode(c.Key).Equals(normalized, StringComparison.OrdinalIgnoreCase));
+                NormalizeTaxIdentifier(c.Key).Equals(normalized, StringComparison.OrdinalIgnoreCase));
             if (byProvider != null)
                 return byProvider;
         }
@@ -136,9 +169,8 @@ public sealed class InvoicePdfProviderResolver : IInvoicePdfProviderResolver
                     providerKey = GetProviderKeyFromRoot(candidate);
 
                 if (string.IsNullOrWhiteSpace(sellerTaxCode) &&
-                    candidate.TryGetProperty("nbmst", out var nbmstProp) &&
-                    nbmstProp.ValueKind == JsonValueKind.String)
-                    sellerTaxCode = nbmstProp.GetString();
+                    candidate.TryGetProperty("nbmst", out var nbmstProp))
+                    sellerTaxCode = JsonTaxFieldReader.CoerceToTrimmedString(nbmstProp);
 
                 if (!string.IsNullOrWhiteSpace(providerKey) && !string.IsNullOrWhiteSpace(sellerTaxCode))
                     break;
@@ -159,10 +191,12 @@ public sealed class InvoicePdfProviderResolver : IInvoicePdfProviderResolver
 
         foreach (var prop in r.EnumerateObject())
         {
-            if (string.Equals(prop.Name, "msttcgp", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(prop.Name, "msttcgp", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Name, "tvanDnKntt", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Name, "tvandnkntt", StringComparison.OrdinalIgnoreCase))
             {
-                var s = prop.Value.GetString();
-                if (!string.IsNullOrWhiteSpace(s)) return s.Trim();
+                var s = JsonTaxFieldReader.CoerceToTrimmedString(prop.Value);
+                if (!string.IsNullOrWhiteSpace(s)) return s;
             }
         }
         return null;
@@ -188,21 +222,89 @@ public sealed class InvoicePdfProviderResolver : IInvoicePdfProviderResolver
         }
     }
 
-    private static string NormalizeTaxCode(string? code)
+    /// <summary>
+    /// Cùng quy tắc với <see cref="InvoicePdfFetcherRegistry"/> khi map key → fetcher:
+    /// trim, bỏ khoảng trắng, cắt hậu tố sau dấu '-', với chuỗi toàn chữ số thì bỏ số 0 đầu.
+    /// </summary>
+    private static string NormalizeTaxIdentifier(string? code)
     {
         if (string.IsNullOrWhiteSpace(code)) return string.Empty;
-        var trimmed = code.Trim();
-        var dash = trimmed.IndexOf('-');
-        if (dash > 0)
-            trimmed = trimmed[..dash];
-        return trimmed;
+        var trimmed = code.Trim().Replace(" ", string.Empty);
+        var dashIndex = trimmed.IndexOf('-');
+        if (dashIndex > 0)
+            trimmed = trimmed[..dashIndex];
+        var allDigits = true;
+        for (var i = 0; i < trimmed.Length; i++)
+        {
+            if (!char.IsDigit(trimmed[i]))
+            {
+                allDigits = false;
+                break;
+            }
+        }
+        if (!allDigits) return trimmed;
+        var withoutLeadingZeros = trimmed.TrimStart('0');
+        return string.IsNullOrEmpty(withoutLeadingZeros) ? trimmed : withoutLeadingZeros;
     }
 
-    private static string NormalizeSellerTaxCode(string? taxCode)
+    private static (string? ProviderTaxCode, string? SellerTaxCode) ParseXmlKeys(string? xml)
     {
-        if (string.IsNullOrWhiteSpace(taxCode))
-            return string.Empty;
-        return taxCode.Trim().Replace(" ", string.Empty);
+        if (string.IsNullOrWhiteSpace(xml))
+            return (null, null);
+        try
+        {
+            var doc = XDocument.Parse(xml);
+            string? provider = doc.Descendants().FirstOrDefault(x =>
+                string.Equals(x.Name.LocalName, "msttcgp", StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+            if (string.IsNullOrWhiteSpace(provider))
+            {
+                foreach (var tag in new[] { "tvandnkntt", "tvan" })
+                {
+                    provider = doc.Descendants().FirstOrDefault(x =>
+                        string.Equals(x.Name.LocalName, tag, StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+                    if (!string.IsNullOrWhiteSpace(provider)) break;
+                }
+            }
+            string? seller = doc.Descendants().FirstOrDefault(x =>
+                string.Equals(x.Name.LocalName, "nbmst", StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+            // TT78 XML thường để MST người bán ở <NBan><MST>...</MST></NBan>
+            if (string.IsNullOrWhiteSpace(seller))
+            {
+                seller = doc.Descendants().FirstOrDefault(x =>
+                    string.Equals(x.Name.LocalName, "MST", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(x.Parent?.Name.LocalName, "NBan", StringComparison.OrdinalIgnoreCase))
+                    ?.Value?.Trim();
+            }
+            return (provider, seller);
+        }
+        catch
+        {
+            // Fallback khi XML có đoạn ký số/cấu trúc làm parser fail:
+            // ưu tiên vẫn bóc được MSTTCGP để route fetcher đúng.
+            var provider = ExtractTagValueByRegex(xml, "msttcgp")
+                ?? ExtractTagValueByRegex(xml, "tvandnkntt")
+                ?? ExtractTagValueByRegex(xml, "tvan");
+            var seller = ExtractTagValueByRegex(xml, "nbmst") ?? ExtractSellerTaxFromNbanByRegex(xml);
+            return (provider, seller);
+        }
+    }
+
+    private static string? ExtractTagValueByRegex(string xml, string tagName)
+    {
+        var m = Regex.Match(
+            xml,
+            $@"<\s*{Regex.Escape(tagName)}\b[^>]*>\s*(?<v>[^<]+?)\s*<\s*/\s*{Regex.Escape(tagName)}\s*>",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return m.Success ? m.Groups["v"].Value.Trim() : null;
+    }
+
+    private static string? ExtractSellerTaxFromNbanByRegex(string xml)
+    {
+        var m = Regex.Match(
+            xml,
+            @"<\s*NBan\b[^>]*>[\s\S]*?<\s*MST\b[^>]*>\s*(?<v>[^<]+?)\s*<\s*/\s*MST\s*>",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return m.Success ? m.Groups["v"].Value.Trim() : null;
     }
 
     private static IReadOnlyList<InvoiceProviderConfig> BuildConfigsFromAttributes()

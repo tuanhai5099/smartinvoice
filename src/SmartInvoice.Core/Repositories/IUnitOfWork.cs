@@ -8,5 +8,6 @@ public interface IUnitOfWork : IAsyncDisposable
     ICompanyRepository Companies { get; }
     IInvoiceRepository Invoices { get; }
     IBackgroundJobRepository BackgroundJobs { get; }
+    IProviderDomainMappingRepository ProviderDomainMappings { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

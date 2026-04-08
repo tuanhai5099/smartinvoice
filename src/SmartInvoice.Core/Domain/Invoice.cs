@@ -45,7 +45,7 @@ public class Invoice
     public short XmlStatus { get; set; }
 
     /// <summary>
-    /// Tên cơ sở để lưu XML/ZIP (thư mục hoặc file): mặc định là &quot;{KyHieu}-{SoHoaDon}&quot; sau khi sanitize.
+    /// Tên cơ sở chuẩn để lưu XML/ZIP: &quot;{KyHieu}_{Khmshdon}_{SoHoaDon}&quot; sau khi sanitize.
     /// Kết hợp với thư mục cấu hình (ExportXmlFolderPath) để tìm đúng nơi chứa XML/HTML.
     /// </summary>
     public string? XmlBaseName { get; set; }

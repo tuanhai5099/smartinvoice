@@ -17,7 +17,7 @@ public sealed class WinInvoiceLookupRule : ILookupResolutionRule
     {
         var payload = context.InvoiceJsonPayload;
         if (string.IsNullOrWhiteSpace(payload)) return null;
-        var privateCode = WinInvoiceTraCuuParsing.TryGetPrivateLookupCodeFromPayload(payload);
+        WinInvoiceTraCuuParsing.ExtractFromCttkhac(payload, out var privateCode, out var companyKey);
         var seller = context.SellerTaxCode;
         if (privateCode == null && string.IsNullOrWhiteSpace(seller))
             return null;
@@ -26,6 +26,9 @@ public sealed class WinInvoiceLookupRule : ILookupResolutionRule
             "WinInvoice",
             SearchUrl,
             privateCode,
-            string.IsNullOrWhiteSpace(seller) ? null : seller.Trim());
+            string.IsNullOrWhiteSpace(seller) ? null : seller.Trim(),
+            null,
+            false,
+            companyKey);
     }
 }

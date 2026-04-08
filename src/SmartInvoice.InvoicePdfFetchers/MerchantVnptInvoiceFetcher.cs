@@ -34,13 +34,72 @@ public sealed class MerchantVnptInvoiceFetcher : IKeyedInvoicePdfFetcher
     private const int AfterSubmitDelayMs = 2000;
 
     private readonly ILogger _logger;
+    private readonly IProviderDomainDiscoveryService _domainDiscovery;
 
-    public MerchantVnptInvoiceFetcher(ILoggerFactory loggerFactory)
+    public MerchantVnptInvoiceFetcher(
+        IProviderDomainDiscoveryService domainDiscovery,
+        ILoggerFactory loggerFactory)
     {
+        _domainDiscovery = domainDiscovery;
         _logger = loggerFactory.CreateLogger(nameof(MerchantVnptInvoiceFetcher));
     }
 
+    public async Task<InvoicePdfResult> AcquirePdfAsync(InvoiceContentContext context, CancellationToken cancellationToken = default)
+    {
+        if (!InvoicePayloadJsonAccessor.TryGetInvoiceJsonForPortalFields(context, out var payloadJson))
+            return new InvoicePdfResult.Failure("Thiếu JSON hóa đơn để đọc nbmst/mhdon cho VNPT merchant.");
+
+        string? sellerTaxCode = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
+            sellerTaxCode = TryGetString(r, "nbmst");
+        }
+        catch
+        {
+            // ignored
+        }
+
+        var merchantConfig = await ResolveMerchantConfigAsync(
+            context.CompanyId,
+            context.ProviderTaxCode,
+            sellerTaxCode ?? context.SellerTaxCode,
+            cancellationToken).ConfigureAwait(false);
+
+        if (merchantConfig == null)
+            return new InvoicePdfResult.Failure("Nhà cung cấp VNPT chưa có domain tra cứu cho MST người bán này. Vui lòng nhập domain ở popup gợi ý tra cứu.");
+
+        return await FetchPdfInternalAsync(payloadJson, merchantConfig, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
+    {
+        string? sellerTaxCode = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
+            sellerTaxCode = TryGetString(r, "nbmst");
+        }
+        catch
+        {
+            // ignored
+        }
+
+        var merchantConfig = await ResolveMerchantConfigAsync(
+            companyId: null,
+            providerTaxCode: "0100684378",
+            sellerTaxCode: sellerTaxCode,
+            cancellationToken).ConfigureAwait(false);
+        if (merchantConfig == null)
+            return new InvoicePdfResult.Failure("Nhà cung cấp này chưa được cấu hình cho VNPT merchant fetcher.");
+        return await FetchPdfInternalAsync(payloadJson, merchantConfig, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<InvoicePdfResult> FetchPdfInternalAsync(string payloadJson, MerchantConfig initialConfig, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(payloadJson))
             return new InvoicePdfResult.Failure("Payload hóa đơn trống.");
@@ -63,7 +122,7 @@ public sealed class MerchantVnptInvoiceFetcher : IKeyedInvoicePdfFetcher
         if (string.IsNullOrWhiteSpace(mccqt))
             return new InvoicePdfResult.Failure("Payload không có MCCQT (mhdon) – không thể tra cứu trên VNPT.");
 
-        var merchantConfig = ResolveMerchantConfig(sellerTaxCode);
+        var merchantConfig = initialConfig;
         if (merchantConfig == null)
         {
             _logger.LogWarning("Merchant VNPT PDF: MST người bán '{TaxCode}' chưa được cấu hình.", sellerTaxCode ?? "(null)");
@@ -287,79 +346,34 @@ public sealed class MerchantVnptInvoiceFetcher : IKeyedInvoicePdfFetcher
             return null;
 
         var normalized = sellerTaxCode.Trim().Replace(" ", string.Empty);
-        // LOTTE MART BDG: 0304741634-003
-        if (string.Equals(normalized, "0304741634-003", StringComparison.OrdinalIgnoreCase))
+        if (VnptMerchantSearchUrlCatalog.TryGetSearchUrlBySellerTaxCode(normalized, out var url))
+            return new MerchantConfig(normalized, url);
+
+        return null;
+    }
+
+    private async Task<MerchantConfig?> ResolveMerchantConfigAsync(
+        Guid? companyId,
+        string? providerTaxCode,
+        string? sellerTaxCode,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sellerTaxCode))
+            return null;
+
+        var staticCfg = ResolveMerchantConfig(sellerTaxCode);
+        if (staticCfg != null)
+            return staticCfg;
+
+        if (companyId.HasValue && !string.IsNullOrWhiteSpace(providerTaxCode))
         {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-bdg-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
+            var resolved = await _domainDiscovery
+                .ResolveAsync(companyId.Value, providerTaxCode, sellerTaxCode, cancellationToken)
+                .ConfigureAwait(false);
+            if (resolved.Found && !string.IsNullOrWhiteSpace(resolved.SearchUrl))
+                return new MerchantConfig(sellerTaxCode.Trim(), resolved.SearchUrl);
         }
 
-        // LOTTE TỔNG (Lotte Tong): 0304741634 – trang lấy PDF gốc lottemart-nsg-tt78
-        if (string.Equals(normalized, "0304741634", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "http://lottemart-nsg-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // LOTTE MART NSG: 0702101089
-        if (string.Equals(normalized, "0702101089", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-nsg-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // LOTTE MART VTU: 0304741634-005
-        if (string.Equals(normalized, "0304741634-005", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-vtu-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // LOTTE MART BDH: 0304741634-008
-        if (string.Equals(normalized, "0304741634-008", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-bdh-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // LOTTE MART CTO: 0304741634-007
-        if (string.Equals(normalized, "0304741634-007", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-cto-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // LOTTE MART NTG: 0304741634-011
-        if (string.Equals(normalized, "0304741634-011", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-ntg-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // LOTTE MART DNI: 0304741634-001
-        if (string.Equals(normalized, "0304741634-001", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-dni-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // LOTTE MART BTN: 0304741634-002
-        if (string.Equals(normalized, "0304741634-002", StringComparison.OrdinalIgnoreCase))
-        {
-            return new MerchantConfig(
-                normalized,
-                "https://lottemart-btn-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey");
-        }
-
-        // Sau này chỉ cần thêm các case khác (hoặc đọc từ config).
         return null;
     }
 

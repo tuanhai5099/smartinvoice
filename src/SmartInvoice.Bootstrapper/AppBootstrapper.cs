@@ -75,6 +75,8 @@ public class AppBootstrapper : PrismBootstrapper
         containerRegistry.Register<WinInvoicePdfFetcher>();
         containerRegistry.Register<WinCommerceInvoicePdfFetcher>();
         containerRegistry.Register<EinvoiceInvoicePdfFetcher>();
+        containerRegistry.Register<MyinvoiceInvoicePdfFetcher>();
+        containerRegistry.Register<VietinvoiceInvoicePdfFetcher>();
         containerRegistry.Register<MerchantVnptInvoiceFetcher>();
         containerRegistry.Register<GrabInvoicePdfFetcher>();
         containerRegistry.Register<SesGroupInvoicePdfFetcher>();
@@ -95,11 +97,17 @@ public class AppBootstrapper : PrismBootstrapper
                 new FastInvoiceLookupRule(),
                 new HtInvoiceLookupRule(),
                 new MeinvoiceInvoiceLookupRule(),
+                new VietinvoiceLookupRule(),
                 new ViettelInvoiceLookupRule(),
             };
             return new InvoiceLookupCatalog(resolver, rules, lf);
         });
         containerRegistry.RegisterSingleton<IInvoiceProviderOrchestrator, InvoiceProviderOrchestrator>();
+        containerRegistry.RegisterSingleton<IInvoiceXmlFileNamingStrategy, StandardInvoiceXmlFileNamingStrategy>();
+        containerRegistry.RegisterSingleton<IInvoiceStoragePathPolicy, DefaultInvoiceStoragePathPolicy>();
+        containerRegistry.RegisterSingleton<IInvoiceFilePackagingService, InvoiceFilePackagingService>();
+        containerRegistry.RegisterSingleton<IInvoiceXmlLocator, InvoiceXmlLocator>();
+        containerRegistry.Register<IProviderDomainDiscoveryService, ProviderDomainDiscoveryService>();
         containerRegistry.Register<IInvoiceXmlPreparationService, InvoiceXmlPreparationService>();
         containerRegistry.Register<IInvoicePdfService, InvoicePdfService>();
 

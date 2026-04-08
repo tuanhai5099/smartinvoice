@@ -9,6 +9,7 @@ public class UnitOfWork : IUnitOfWork
     private ICompanyRepository? _companies;
     private IInvoiceRepository? _invoices;
     private IBackgroundJobRepository? _backgroundJobs;
+    private IProviderDomainMappingRepository? _providerDomainMappings;
 
     public UnitOfWork(AppDbContext db)
     {
@@ -18,6 +19,7 @@ public class UnitOfWork : IUnitOfWork
     public ICompanyRepository Companies => _companies ??= new CompanyRepository(_db);
     public IInvoiceRepository Invoices => _invoices ??= new InvoiceRepository(_db);
     public IBackgroundJobRepository BackgroundJobs => _backgroundJobs ??= (IBackgroundJobRepository)Invoices;
+    public IProviderDomainMappingRepository ProviderDomainMappings => _providerDomainMappings ??= new ProviderDomainMappingRepository(_db);
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

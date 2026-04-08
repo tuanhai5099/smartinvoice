@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SmartInvoice.Core.Domain;
+using SmartInvoice.Infrastructure.Serialization;
 
 namespace SmartInvoice.Infrastructure.Persistence;
 
@@ -27,7 +29,48 @@ public static class AppDbContextSchemaMigrator
         EnsureBackgroundJobExportColumns(db);
         EnsureBackgroundJobPayloadJsonColumn(db);
         EnsureBackgroundJobFailureSummaryJsonColumn(db);
+        EnsureProviderDomainMappingsTable(db);
         ResetInterruptedRunningBackgroundJobs(db);
+    }
+
+    private static void EnsureProviderDomainMappingsTable(DbContext db)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != System.Data.ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                connection.Open();
+            using var createCmd = connection.CreateCommand();
+            createCmd.CommandText =
+                """
+                CREATE TABLE IF NOT EXISTS ProviderDomainMappings (
+                    Id TEXT NOT NULL PRIMARY KEY,
+                    CompanyId TEXT NOT NULL,
+                    ProviderTaxCode TEXT NOT NULL,
+                    SellerTaxCode TEXT NOT NULL,
+                    SearchUrl TEXT NOT NULL,
+                    ProviderName TEXT NULL,
+                    IsActive INTEGER NOT NULL DEFAULT 1,
+                    CreatedAt TEXT NOT NULL,
+                    UpdatedAt TEXT NOT NULL
+                );
+                """;
+            createCmd.ExecuteNonQuery();
+
+            using var idxCmd = connection.CreateCommand();
+            idxCmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProviderDomainMappings_Company_Provider_Seller ON ProviderDomainMappings(CompanyId, ProviderTaxCode, SellerTaxCode);";
+            idxCmd.ExecuteNonQuery();
+        }
+        catch
+        {
+            // best effort
+        }
+        finally
+        {
+            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
+                connection.Close();
+        }
     }
 
     /// <summary>Job còn <see cref="BackgroundJobStatus.Running"/> sau khi tắt app / crash — đánh dấu thất bại để hàng đợi không kẹt.</summary>
@@ -492,12 +535,22 @@ CREATE TABLE IF NOT EXISTS Invoices (
                     try
                     {
                         using var doc = JsonDocument.Parse(payload);
-                        var root = doc.RootElement;
-                        var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-                        if (r.TryGetProperty("msttcgp", out var mstProp) && mstProp.ValueKind == JsonValueKind.String)
-                            providerTax = mstProp.GetString()?.Trim();
-                        if (r.TryGetProperty("tvanDnKntt", out var tvanProp) && tvanProp.ValueKind == JsonValueKind.String)
-                            tvanTax = tvanProp.GetString()?.Trim();
+                        foreach (var obj in EnumeratePayloadObjectsForBackfill(doc.RootElement))
+                        {
+                            if (obj.ValueKind != JsonValueKind.Object) continue;
+                            if (string.IsNullOrWhiteSpace(providerTax) &&
+                                obj.TryGetProperty("msttcgp", out var mstProp))
+                                providerTax = JsonTaxFieldReader.CoerceToTrimmedString(mstProp);
+                            if (string.IsNullOrWhiteSpace(tvanTax))
+                            {
+                                if (obj.TryGetProperty("tvanDnKntt", out var tv1))
+                                    tvanTax = JsonTaxFieldReader.CoerceToTrimmedString(tv1);
+                                if (string.IsNullOrWhiteSpace(tvanTax) && obj.TryGetProperty("tvandnkntt", out var tv2))
+                                    tvanTax = JsonTaxFieldReader.CoerceToTrimmedString(tv2);
+                            }
+                            if (!string.IsNullOrWhiteSpace(providerTax) && !string.IsNullOrWhiteSpace(tvanTax))
+                                break;
+                        }
                     }
                     catch
                     {
@@ -589,6 +642,24 @@ CREATE TABLE IF NOT EXISTS Invoices (
         {
             if (shouldClose && connection.State == System.Data.ConnectionState.Open)
                 connection.Close();
+        }
+    }
+
+    private static IEnumerable<JsonElement> EnumeratePayloadObjectsForBackfill(JsonElement root)
+    {
+        var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
+        yield return r;
+        if (r.ValueKind != JsonValueKind.Object) yield break;
+        if (r.TryGetProperty("ndhdon", out var ndhdon) && ndhdon.ValueKind == JsonValueKind.Object)
+            yield return ndhdon;
+        if (r.TryGetProperty("hdon", out var hdon) && hdon.ValueKind == JsonValueKind.Object)
+            yield return hdon;
+        if (r.TryGetProperty("data", out var data))
+        {
+            if (data.ValueKind == JsonValueKind.Object)
+                yield return data;
+            else if (data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0)
+                yield return data[0];
         }
     }
 }

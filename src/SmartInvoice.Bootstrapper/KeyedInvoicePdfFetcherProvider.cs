@@ -38,7 +38,9 @@ public sealed class KeyedInvoicePdfFetcherProvider : IKeyedInvoicePdfFetcherProv
             _container.Resolve<SesGroupInvoicePdfFetcher>(),
             _container.Resolve<MerchantVnptInvoiceFetcher>(),
             _container.Resolve<GrabInvoicePdfFetcher>(),
-            _container.Resolve<InvoicePdfFetcherSkeleton>()
+            _container.Resolve<InvoicePdfFetcherSkeleton>(),
+            _container.Resolve<MyinvoiceInvoicePdfFetcher>(),
+            _container.Resolve<VietinvoiceInvoicePdfFetcher>()
         };
     }
 }

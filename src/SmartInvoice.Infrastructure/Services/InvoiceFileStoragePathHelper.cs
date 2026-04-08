@@ -6,6 +6,8 @@ namespace SmartInvoice.Infrastructure.Services;
 /// </summary>
 public static class InvoiceFileStoragePathHelper
 {
+    private const ushort DefaultXmlInvoiceFormCode = 0;
+
     /// <summary>Thư mục gốc ứng dụng (Documents\SmartInvoice).</summary>
     public static string GetAppRootPath() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SmartInvoice");
@@ -71,5 +73,20 @@ public static class InvoiceFileStoragePathHelper
         foreach (var c in Path.GetInvalidFileNameChars())
             name = name.Replace(c, '_');
         return string.IsNullOrEmpty(name) ? "CongTy" : name;
+    }
+
+    /// <summary>
+    /// Tên chuẩn file XML: {KyHieu}_{Khmshdon}_{SoHoaDon}.xml.
+    /// Dùng đồng nhất cho toàn bộ luồng tải/đọc XML.
+    /// </summary>
+    public static string BuildXmlBaseName(string? kyHieu, ushort? khmshdon, int soHoaDon)
+    {
+        var sanitizedKyHieu = (kyHieu ?? string.Empty).Trim();
+        foreach (var c in Path.GetInvalidFileNameChars())
+            sanitizedKyHieu = sanitizedKyHieu.Replace(c, '_');
+        if (string.IsNullOrWhiteSpace(sanitizedKyHieu))
+            sanitizedKyHieu = "KH";
+        var formCode = khmshdon ?? DefaultXmlInvoiceFormCode;
+        return $"{sanitizedKyHieu}_{formCode}_{soHoaDon}";
     }
 }

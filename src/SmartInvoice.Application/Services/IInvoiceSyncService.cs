@@ -31,7 +31,7 @@ public interface IInvoiceSyncService
     /// Tải XML cho tất cả hóa đơn trong danh sách, lưu vào thư mục đích, tạo file ZIP và trả đường dẫn. Báo cáo tiến độ qua progress.
     /// </summary>
     /// <param name="zipOutputDirectory">Nếu có: thư mục lưu file ZIP (theo công ty). Null = dùng folderPath/ExportXmlZip.</param>
-    /// <param name="folderPath">Gốc lưu XML từng HĐ: Documents\SmartInvoice\{Mã công ty}\XML — mỗi file trong folderPath\yyyy_MM\.</param>
+    /// <param name="folderPath">Gốc lưu XML từng HĐ: Documents\SmartInvoice\{Mã công ty}\XML — mỗi file trong folderPath\yyyy_MM\ theo chuẩn tên {KyHieu}_{Khmshdon}_{SoHoaDon}.xml.</param>
     /// <param name="zipOutputDirectory">Thư mục đặt file ZIP gom nhanh; null → folderPath\ExportXmlZip.</param>
     Task<DownloadXmlResult> DownloadInvoicesXmlAsync(Guid companyId, IReadOnlyList<InvoiceDisplayDto> invoices, string folderPath, IProgress<DownloadXmlProgress>? progress, CancellationToken cancellationToken = default, string? zipOutputDirectory = null);
 

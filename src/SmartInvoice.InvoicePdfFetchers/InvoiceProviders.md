@@ -5,6 +5,12 @@ File này chỉ để **tham khảo cho lập trình viên** khi thêm/sửa PDF
 - **Mỗi dòng**: MST NCC (hoặc key logic) → Tên NCC → Ghi chú / Link tra cứu chính (nếu có).
 - Khi implement fetcher mới, vui lòng **cập nhật thêm dòng** tương ứng.
 
+### Thứ tự chọn PDF fetcher (`InvoicePdfProviderResolver`)
+
+1. **nbmst** (MST người bán): nếu có `[InvoiceProvider(..., SellerTaxCode)]` khớp (chuẩn hóa giống registry: hậu tố chi nhánh, bỏ số 0 đầu khi toàn chữ số) thì dùng fetcher đó.
+2. **msttcgp / TVAN**: nếu không có cấu hình theo người bán, khớp `[InvoiceProvider(..., ProviderTaxCode)]` theo `msttcgp` hoặc `tvanDnKntt` / `tvandnkntt` (JSON hoặc XML).
+3. **Đăng ký DI**: mọi `IKeyedInvoicePdfFetcher` phải có trong `KeyedInvoicePdfFetcherProvider` + `ProviderKey` (và thường kèm `[InvoiceProvider]` trừ fetcher mẫu / key chỉ dùng thủ công).
+
 ### NCC theo MST (`msttcgp` / ProviderTaxCode)
 
 - **0101360697** – eHoadon / BKAV  
@@ -53,13 +59,29 @@ File này chỉ để **tham khảo cho lập trình viên** khi thêm/sửa PDF
   - Tra cứu: `https://tracuu.wininvoice.vn/` – dùng private_code + mã công ty (`cmpn_key`).  
   - Fetcher: `WinInvoicePdfFetcher` (hiện tại đang map theo MST người bán WinCommerce – xem phần dưới).
 
+- **0108971656** – MyInvoice (MCCQT trong XML / payload)  
+  - Fetcher: `MyinvoiceInvoicePdfFetcher`.
+
+- **0315382923** – SES Group  
+  - Fetcher: `SesGroupInvoicePdfFetcher`.
+
+- **0315638251** – HT Invoice  
+  - Fetcher: `HtInvoiceInvoicePdfFetcher`.
+
+- **0101300842** – Einvoice (FPT / eInvoice tùy portal)  
+  - Fetcher: `EinvoiceInvoicePdfFetcher`.
+
+- **0106870211** – Vietinvoice  
+  - Tra cứu: `https://tracuuhoadon.vietinvoice.vn/`  
+  - Fetcher: `VietinvoiceInvoicePdfFetcher` – dùng trường `Mã tra cứu` từ payload.
+
 ### NCC theo MST người bán (`nbmst` / SellerTaxCode)
 
 Những nhà cung cấp này được chọn **theo MST người bán**, không chỉ theo `msttcgp`.
 
-- **0104918404** – WinCommerce / WinMart (WinInvoice)  
-  - Fetcher: `WinInvoicePdfFetcher`  
-  - Portal PDF gốc: `https://tracuu.wininvoice.vn/` – dùng `private_code` + `cmpn_key` từ `cttkhac`.
+- **0104918404** – WinCommerce / WinMart  
+  - **Mặc định resolve**: `WinInvoicePdfFetcher` (portal `tracuu.wininvoice.vn`, `private_code` + `cmpn_key`).  
+  - **Thêm**: `WinCommerceInvoicePdfFetcher` — portal `https://hoadon.winmart.vn/` (MCCQT), key registry `WIN-INVOICE`; không gắn `[InvoiceProvider]` vì cùng MST với WinInvoice (tránh hai fetcher cùng priority). Chỉ dùng khi tách route theo NCC/loại HĐ trong tương lai hoặc gọi trực tiếp theo key.
 
 - **VNPT-MERCHANT** – VNPT merchant (các siêu thị LOTTE, v.v.)  
   - Fetcher: `MerchantVnptInvoiceFetcher`  
@@ -73,6 +95,7 @@ Những nhà cung cấp này được chọn **theo MST người bán**, không 
     - `0304741634-011` – LOTTE MART NTG – `https://lottemart-ntg-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey`
     - `0304741634-001` – LOTTE MART DNI – `https://lottemart-dni-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey`
     - `0304741634-002` – LOTTE MART BTN – `https://lottemart-btn-tt78.vnpt-invoice.com.vn/HomeNoLogin/SearchByFkey`
+    - `0300555450`     – PETROLIMEX – `https://hoadon.petrolimex.com.vn/`
 
 - **0312650437** – Grab (vn.einvoice.grab.com)  
   - Fetcher: `GrabInvoicePdfFetcher`  

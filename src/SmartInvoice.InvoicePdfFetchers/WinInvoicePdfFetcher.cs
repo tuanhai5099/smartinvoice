@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PuppeteerSharp;
 using SmartInvoice.Application.Services;
@@ -37,9 +36,17 @@ public sealed class WinInvoicePdfFetcher : IKeyedInvoicePdfFetcher
         _logger = loggerFactory.CreateLogger(nameof(WinInvoicePdfFetcher));
     }
 
+    public Task<InvoicePdfResult> AcquirePdfAsync(InvoiceContentContext context, CancellationToken cancellationToken = default)
+    {
+        if (!InvoicePayloadJsonAccessor.TryGetInvoiceJsonForPortalFields(context, out var json))
+            return Task.FromResult<InvoicePdfResult>(new InvoicePdfResult.Failure(
+                "Thiếu JSON hóa đơn để đọc cttkhac WinInvoice (Mã tra cứu / Mã công ty)."));
+        return FetchPdfAsync(json, cancellationToken);
+    }
+
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
     {
-        if (!TryGetCodesFromPayload(payloadJson, out var privateCode, out var companyKey))
+        if (!WinInvoiceTraCuuParsing.TryGetTraCuuCodesFromPayload(payloadJson, out var privateCode, out var companyKey))
         {
             _logger.LogWarning("WinInvoice PDF: payload không có đủ cttkhac 'Mã tra cứu hóa đơn' và 'Mã công ty'.");
             return new InvoicePdfResult.Failure("Hóa đơn thiếu Mã tra cứu hóa đơn hoặc Mã công ty (cttkhac). Không thể tải PDF từ WinInvoice.");
@@ -207,50 +214,6 @@ public sealed class WinInvoicePdfFetcher : IKeyedInvoicePdfFetcher
             {
                 // best effort cleanup
             }
-        }
-    }
-
-    /// <summary>Lấy private_code (Mã tra cứu hóa đơn) và cmpn_key (Mã công ty) từ cttkhac trong payload.</summary>
-    private static bool TryGetCodesFromPayload(string payloadJson, out string? privateCode, out string? companyKey)
-    {
-        privateCode = null;
-        companyKey = null;
-
-        if (string.IsNullOrWhiteSpace(payloadJson))
-            return false;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(payloadJson);
-            var root = doc.RootElement;
-            var r = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0 ? root[0] : root;
-
-            if (!r.TryGetProperty("cttkhac", out var arr) || arr.ValueKind != JsonValueKind.Array)
-                return false;
-
-            foreach (var item in arr.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.Object) continue;
-                var ttruong = item.TryGetProperty("ttruong", out var tt) ? tt.GetString() : null;
-                if (string.IsNullOrWhiteSpace(ttruong)) continue;
-
-                var value = item.TryGetProperty("dlieu", out var dl) ? dl.GetString()
-                    : (item.TryGetProperty("dLieu", out var dL) ? dL.GetString() : null);
-                if (string.IsNullOrWhiteSpace(value)) continue;
-
-                var trimmedValue = value.Trim();
-
-                if (string.Equals(ttruong, "Mã tra cứu hóa đơn", StringComparison.OrdinalIgnoreCase))
-                    privateCode = trimmedValue;
-                else if (string.Equals(ttruong, "Mã công ty", StringComparison.OrdinalIgnoreCase))
-                    companyKey = trimmedValue;
-            }
-
-            return !string.IsNullOrWhiteSpace(privateCode) && !string.IsNullOrWhiteSpace(companyKey);
-        }
-        catch
-        {
-            return false;
         }
     }
 }

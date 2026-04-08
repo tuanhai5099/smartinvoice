@@ -11,6 +11,8 @@ using SmartInvoice.Application.Services;
 using SmartInvoice.Core;
 using SmartInvoice.Core.Domain;
 using SmartInvoice.Core.Repositories;
+using SmartInvoice.Infrastructure.Services.Pdf;
+using SmartInvoice.Infrastructure.Serialization;
 
 namespace SmartInvoice.Infrastructure.Services;
 
@@ -21,13 +23,23 @@ public class InvoiceSyncService : IInvoiceSyncService
     private readonly IUnitOfWork _uow;
     private readonly IHoaDonDienTuApiClient _apiClient;
     private readonly ICompanyAppService _companyService;
+    private readonly IInvoiceXmlFileNamingStrategy _xmlFileNamingStrategy;
+    private readonly IInvoiceFilePackagingService _filePackagingService;
     private readonly ILogger _logger;
 
-    public InvoiceSyncService(IUnitOfWork uow, IHoaDonDienTuApiClient apiClient, ICompanyAppService companyService, ILoggerFactory loggerFactory)
+    public InvoiceSyncService(
+        IUnitOfWork uow,
+        IHoaDonDienTuApiClient apiClient,
+        ICompanyAppService companyService,
+        IInvoiceXmlFileNamingStrategy xmlFileNamingStrategy,
+        IInvoiceFilePackagingService filePackagingService,
+        ILoggerFactory loggerFactory)
     {
         _uow = uow;
         _apiClient = apiClient;
         _companyService = companyService;
+        _xmlFileNamingStrategy = xmlFileNamingStrategy;
+        _filePackagingService = filePackagingService;
         _logger = loggerFactory.CreateLogger(nameof(InvoiceSyncService));
     }
 
@@ -506,7 +518,7 @@ public class InvoiceSyncService : IInvoiceSyncService
         try
         {
             using var doc = JsonDocument.Parse(entity.PayloadJson);
-            var r = doc.RootElement;
+            var r = ResolveInvoicePayloadRoot(doc.RootElement);
             if (string.IsNullOrEmpty(nbmst))
                 nbmst = GetStr(r, "nbmst")?.Trim();
             if (string.IsNullOrEmpty(khhdon))
@@ -625,7 +637,8 @@ public class InvoiceSyncService : IInvoiceSyncService
         if (company?.AccessToken == null)
             return new DownloadXmlResult(false, "Token trống.", 0);
 
-        // folderPath = gốc XML theo công ty: Documents\SmartInvoice\{Mã công ty}\XML — mỗi HĐ vào folderPath\yyyy_MM\*.xml (đồng bộ UI + job nền).
+        // folderPath = gốc XML theo công ty: Documents\SmartInvoice\{Mã công ty}\XML
+        // mỗi HĐ vào folderPath\yyyy_MM\{KyHieu}_{Khmshdon}_{SoHoaDon}.xml (đồng bộ UI + job nền).
         var total = invoices.Count;
         var downloaded = 0;
         var failedCount = 0;
@@ -650,8 +663,8 @@ public class InvoiceSyncService : IInvoiceSyncService
                 progress?.Report(new DownloadXmlProgress(i + 1, total, null, new DownloadXmlItemResult(key, soHoaDonDisplay, false, false, "Thiếu MST hoặc ký hiệu", inv.Id)));
                 continue;
             }
-            // Tên file XML giống tên PDF: {SoHoaDon}_{KyHieu}.xml để người dùng dễ nhận ra.
-            var baseName = $"{inv.SoHoaDon}_{SanitizeFileName(khhdon)}";
+            // Tên XML chuẩn toàn hệ thống: {KyHieu}_{Khmshdon}_{SoHoaDon}.xml
+            var baseName = _xmlFileNamingStrategy.BuildBaseName(inv);
             var xmlFileName = baseName + ".xml";
             var monthFolder = Path.Combine(folderPath, InvoiceFileStoragePathHelper.GetMonthYearFolderName(inv.NgayLap));
             Directory.CreateDirectory(monthFolder);
@@ -788,14 +801,13 @@ public class InvoiceSyncService : IInvoiceSyncService
                 : Array.Empty<string>();
             if (xmlFiles.Length > 0)
             {
-                var zipName = $"HoaDonXml_{DateTime.Now:yyyyMMdd_HHmmss}.zip";
+                var zipNameWithoutExtension = $"HoaDonXml_{DateTime.Now:yyyyMMdd_HHmmss}";
                 var exportZipFolder = !string.IsNullOrWhiteSpace(zipOutputDirectory)
                     ? zipOutputDirectory.Trim()
                     : Path.Combine(folderPath, "ExportXmlZip");
-                Directory.CreateDirectory(exportZipFolder);
-                zipPath = Path.Combine(exportZipFolder, zipName);
-                if (File.Exists(zipPath)) File.Delete(zipPath);
-                ZipFile.CreateFromDirectory(tempPackageFolder, zipPath);
+                zipPath = await _filePackagingService
+                    .CreateZipFromDirectoryAsync(tempPackageFolder, exportZipFolder, zipNameWithoutExtension, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
         catch (Exception ex)
@@ -878,7 +890,8 @@ public class InvoiceSyncService : IInvoiceSyncService
         try
         {
             using var doc = JsonDocument.Parse(inv.PayloadJson);
-            var r = doc.RootElement;
+            var rootEl = doc.RootElement;
+            var r = ResolveInvoicePayloadRoot(rootEl);
             inv.NgayLap = TryGetDateTime(r, "tdlap");
             inv.Tthai = r.TryGetProperty("tthai", out var th) && th.ValueKind == JsonValueKind.Number ? (short)th.GetInt32() : (short)0;
             inv.Tgtcthue = TryGetDecimal(r, "tgtcthue");
@@ -901,15 +914,9 @@ public class InvoiceSyncService : IInvoiceSyncService
             inv.NguoiBan = GetStr(r, "nbten");
             inv.NguoiMua = GetStr(r, "nmten") ?? GetStr(r, "nmtnmua");
             inv.MstMua = GetStr(r, "nmmst");
-            inv.Dvtte = GetStr(r, "dvtte");
-
-            // Nếu chưa có ProviderTaxCode/TvanTaxCode (cột mới) thì cố gắng denormalize từ root.
-            inv.ProviderTaxCode ??= GetStr(r, "msttcgp");
-            inv.TvanTaxCode ??= GetStr(r, "tvanDnKntt");
-
-            // Denormalize provider/tvan tax codes for fast filtering.
-            inv.ProviderTaxCode = GetStr(r, "msttcgp");
-            inv.TvanTaxCode = GetStr(r, "tvanDnKntt");
+            inv.Dvtte = GetStrFromInvoicePayload(rootEl, "dvtte");
+            inv.ProviderTaxCode = GetStrFromInvoicePayload(rootEl, "msttcgp");
+            inv.TvanTaxCode = GetStrFromInvoicePayload(rootEl, "tvanDnKntt", "tvandnkntt", "tVanDnKntt");
         }
         catch
         {
@@ -922,7 +929,8 @@ public class InvoiceSyncService : IInvoiceSyncService
         try
         {
             using var doc = JsonDocument.Parse(inv.PayloadJson);
-            var r = doc.RootElement;
+            var rootEl = doc.RootElement;
+            var r = ResolveInvoicePayloadRoot(rootEl);
             var id = GetStr(r, "id") ?? inv.ExternalId;
             var khhdon = GetStr(r, "khhdon");
             var shdon = r.TryGetProperty("shdon", out var sh) ? sh.GetInt32() : 0;
@@ -956,10 +964,10 @@ public class InvoiceSyncService : IInvoiceSyncService
             var counterpartyName = isBanRa ? nmten : nbten;
             var counterpartyMst = isBanRa ? nmmst : nbmst;
             var mhdon = GetStr(r, "mhdon");
-            var dvtte = GetStr(r, "dvtte");
+            var dvtte = GetStrFromInvoicePayload(rootEl, "dvtte");
 
-            var providerTaxCode = inv.ProviderTaxCode ?? GetStr(r, "msttcgp");
-            var tvanTaxCode = inv.TvanTaxCode ?? GetStr(r, "tvanDnKntt");
+            var providerTaxCode = inv.ProviderTaxCode ?? GetStrFromInvoicePayload(rootEl, "msttcgp");
+            var tvanTaxCode = inv.TvanTaxCode ?? GetStrFromInvoicePayload(rootEl, "tvanDnKntt", "tvandnkntt", "tVanDnKntt");
 
             // Tỷ giá: ưu tiên trường tgia trong JSON tổng (đúng theo dữ liệu cổng),
             // nếu không có thì fallback sang cttkhac["ExchangeRate"].
@@ -1038,8 +1046,50 @@ public class InvoiceSyncService : IInvoiceSyncService
         return false;
     }
 
+    private static JsonElement ResolveInvoicePayloadRoot(JsonElement root)
+    {
+        return root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0
+            ? root[0]
+            : root;
+    }
+
+    private static IEnumerable<JsonElement> EnumerateInvoicePayloadObjectCandidates(JsonElement root)
+    {
+        var r = ResolveInvoicePayloadRoot(root);
+        yield return r;
+        if (r.ValueKind != JsonValueKind.Object) yield break;
+
+        if (r.TryGetProperty("ndhdon", out var ndhdon) && ndhdon.ValueKind == JsonValueKind.Object)
+            yield return ndhdon;
+
+        if (r.TryGetProperty("hdon", out var hdon) && hdon.ValueKind == JsonValueKind.Object)
+            yield return hdon;
+
+        if (r.TryGetProperty("data", out var data))
+        {
+            if (data.ValueKind == JsonValueKind.Object)
+                yield return data;
+            else if (data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0)
+                yield return data[0];
+        }
+    }
+
+    private static string? GetStrFromInvoicePayload(JsonElement root, params string[] propertyNames)
+    {
+        foreach (var obj in EnumerateInvoicePayloadObjectCandidates(root))
+        {
+            if (obj.ValueKind != JsonValueKind.Object) continue;
+            foreach (var name in propertyNames)
+            {
+                var s = GetStr(obj, name);
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+        }
+        return null;
+    }
+
     private static string? GetStr(JsonElement el, string name) =>
-        el.TryGetProperty(name, out var p) ? p.GetString() : null;
+        el.TryGetProperty(name, out var p) ? JsonTaxFieldReader.CoerceToTrimmedString(p) : null;
 
     private static DateTime? TryGetDateTime(JsonElement el, string name)
     {

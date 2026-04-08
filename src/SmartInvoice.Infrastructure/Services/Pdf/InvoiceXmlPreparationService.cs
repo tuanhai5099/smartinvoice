@@ -34,15 +34,24 @@ public sealed class InvoiceXmlPreparationService : IInvoiceXmlPreparationService
 {
     private readonly IUnitOfWork _uow;
     private readonly IInvoiceSyncService _invoiceSyncService;
+    private readonly IInvoiceXmlLocator _xmlLocator;
+    private readonly IInvoiceXmlFileNamingStrategy _xmlNamingStrategy;
+    private readonly IInvoiceStoragePathPolicy _storagePathPolicy;
     private readonly ILogger _logger;
 
     public InvoiceXmlPreparationService(
         IUnitOfWork uow,
         IInvoiceSyncService invoiceSyncService,
+        IInvoiceXmlLocator xmlLocator,
+        IInvoiceXmlFileNamingStrategy xmlNamingStrategy,
+        IInvoiceStoragePathPolicy storagePathPolicy,
         ILoggerFactory loggerFactory)
     {
         _uow = uow ?? throw new ArgumentNullException(nameof(uow));
         _invoiceSyncService = invoiceSyncService ?? throw new ArgumentNullException(nameof(invoiceSyncService));
+        _xmlLocator = xmlLocator ?? throw new ArgumentNullException(nameof(xmlLocator));
+        _xmlNamingStrategy = xmlNamingStrategy ?? throw new ArgumentNullException(nameof(xmlNamingStrategy));
+        _storagePathPolicy = storagePathPolicy ?? throw new ArgumentNullException(nameof(storagePathPolicy));
         _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
             .CreateLogger(nameof(InvoiceXmlPreparationService));
     }
@@ -54,8 +63,8 @@ public sealed class InvoiceXmlPreparationService : IInvoiceXmlPreparationService
     {
         var company = await _uow.Companies.GetByIdTrackedAsync(companyId, cancellationToken).ConfigureAwait(false);
         var companyCode = company?.CompanyCode ?? company?.CompanyName ?? company?.TaxCode ?? companyId.ToString("N")[..8];
-        var xmlRoot = InvoiceFileStoragePathHelper.GetCompanyXmlRootPath(companyCode);
-        var companyRoot = InvoiceFileStoragePathHelper.GetCompanyRootPath(companyCode);
+        var xmlRoot = _storagePathPolicy.GetCompanyXmlRoot(companyCode);
+        var companyRoot = _storagePathPolicy.GetCompanyRoot(companyCode);
         var exportRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SmartInvoice", "ExportXml");
 
         var existing = await TryReadFromKnownRootsAsync(
@@ -89,6 +98,15 @@ public sealed class InvoiceXmlPreparationService : IInvoiceXmlPreparationService
                     zipOutputDirectory: companyRoot)
                 .ConfigureAwait(false);
 
+            // Đồng bộ ngay base-name vừa dùng để tải XML vào entity hiện tại,
+            // tránh mismatch khi object invoice chưa được refresh từ DB.
+            var downloadedInvoice = displayList.FirstOrDefault();
+            if (downloadedInvoice != null)
+            {
+                // Luôn cập nhật base-name theo invoice vừa tải để locator không bị lệch state entity cũ.
+                invoice.XmlBaseName = _xmlNamingStrategy.BuildBaseName(downloadedInvoice);
+            }
+
             var afterDownload = await TryReadFromKnownRootsAsync(
                 new[] { xmlRoot, companyRoot, exportRoot },
                 invoice,
@@ -102,8 +120,46 @@ public sealed class InvoiceXmlPreparationService : IInvoiceXmlPreparationService
                     null);
             }
 
+            // Fallback cuối cùng: vì vừa tải đúng 1 hóa đơn, thử đọc trực tiếp đường dẫn expected theo display invoice.
+            if (downloadedInvoice != null)
+            {
+                var expectedBaseName = _xmlNamingStrategy.BuildBaseName(downloadedInvoice);
+                var expectedMonthFolder = Path.Combine(xmlRoot, InvoiceFileStoragePathHelper.GetMonthYearFolderName(downloadedInvoice.NgayLap));
+                var expectedXmlPath = Path.Combine(expectedMonthFolder, expectedBaseName + ".xml");
+                if (File.Exists(expectedXmlPath))
+                {
+                    var xml = await File.ReadAllTextAsync(expectedXmlPath, cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(xml))
+                    {
+                        return new InvoiceXmlPreparationResult(
+                            InvoiceXmlPreparationStatus.Downloaded,
+                            xml,
+                            expectedXmlPath,
+                            null);
+                    }
+                }
+            }
+
+            if (dl.NoXmlCount > 0 && dl.DownloadedCount == 0)
+            {
+                return new InvoiceXmlPreparationResult(
+                    InvoiceXmlPreparationStatus.Failed,
+                    null,
+                    null,
+                    "API không trả XML cho hóa đơn này (không tồn tại hồ sơ gốc hoặc XML chưa sẵn sàng).");
+            }
+
+            if (dl.FailedCount > 0 && dl.DownloadedCount == 0)
+            {
+                return new InvoiceXmlPreparationResult(
+                    InvoiceXmlPreparationStatus.Failed,
+                    null,
+                    null,
+                    string.IsNullOrWhiteSpace(dl.Message) ? "Tải XML thất bại." : dl.Message);
+            }
+
             var reason = string.IsNullOrWhiteSpace(dl.Message)
-                ? "Không tìm thấy file XML sau khi gọi tải XML."
+                ? "Đã gọi tải XML nhưng không đọc được file XML từ thư mục lưu trữ."
                 : dl.Message;
             return new InvoiceXmlPreparationResult(InvoiceXmlPreparationStatus.Failed, null, null, reason);
         }
@@ -114,7 +170,7 @@ public sealed class InvoiceXmlPreparationService : IInvoiceXmlPreparationService
         }
     }
 
-    private static async Task<(string? XmlContent, string? XmlPath)> TryReadFromKnownRootsAsync(
+    private async Task<(string? XmlContent, string? XmlPath)> TryReadFromKnownRootsAsync(
         IReadOnlyList<string> roots,
         Invoice invoice,
         CancellationToken cancellationToken)
@@ -124,64 +180,11 @@ public sealed class InvoiceXmlPreparationService : IInvoiceXmlPreparationService
             if (string.IsNullOrWhiteSpace(root))
                 continue;
 
-            var found = await TryReadInvoiceXmlAsync(root, invoice, cancellationToken).ConfigureAwait(false);
+            var found = await _xmlLocator.TryReadInvoiceXmlAsync(root, invoice, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(found.XmlContent))
                 return found;
         }
 
         return (null, null);
-    }
-
-    private static async Task<(string? XmlContent, string? XmlPath)> TryReadInvoiceXmlAsync(
-        string companyRoot,
-        Invoice invoice,
-        CancellationToken cancellationToken)
-    {
-        static string GetBaseName(Invoice inv)
-        {
-            var kh = inv.KyHieu ?? "";
-            kh = InvoiceFileStoragePathHelper.SanitizeFileName(kh);
-            return $"{kh}-{inv.SoHoaDon}";
-        }
-
-        var baseName = string.IsNullOrWhiteSpace(invoice.XmlBaseName)
-            ? GetBaseName(invoice)
-            : invoice.XmlBaseName!;
-
-        var monthFolder = InvoiceFileStoragePathHelper.GetMonthYearPath(companyRoot, invoice.NgayLap);
-        string? xmlPath = null;
-
-        var destDir = Path.Combine(monthFolder, baseName);
-        if (Directory.Exists(destDir))
-            xmlPath = Directory.EnumerateFiles(destDir, "*.xml", SearchOption.AllDirectories).FirstOrDefault();
-
-        if (xmlPath == null)
-        {
-            var rawXmlPath = Path.Combine(monthFolder, baseName + ".xml");
-            if (File.Exists(rawXmlPath))
-                xmlPath = rawXmlPath;
-        }
-
-        if (xmlPath == null)
-        {
-            try
-            {
-                if (Directory.Exists(companyRoot))
-                {
-                    var pattern = baseName + "*.xml";
-                    xmlPath = Directory.GetFiles(companyRoot, pattern, SearchOption.AllDirectories).FirstOrDefault();
-                }
-            }
-            catch
-            {
-                // ignored
-            }
-        }
-
-        if (xmlPath == null || !File.Exists(xmlPath))
-            return (null, null);
-
-        var xml = await File.ReadAllTextAsync(xmlPath, cancellationToken).ConfigureAwait(false);
-        return (xml, xmlPath);
     }
 }
