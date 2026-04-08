@@ -12,7 +12,7 @@ namespace SmartInvoice.InvoicePdfFetchers;
 /// Mở trang Lookup?InvoiceGUID={id}, click dropdown Download → LinkDownPDF, chờ file tải và trả về bytes.
 /// Dùng Puppeteer Sharp (Chromium headless) để scrape vì trang dùng JS và dropdown.
 /// </summary>
-[InvoiceProvider("0101360697", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true)]
+[InvoiceProvider("0101360697", InvoiceProviderMatchKind.ProviderTaxCode, MayRequireUserIntervention = true, RequiresXml = true)]
 public sealed class EhoadonInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 {
     /// <summary>Mã số thuế nhà cung cấp dịch vụ hóa đơn (BKAV).</summary>
@@ -29,6 +29,21 @@ public sealed class EhoadonInvoicePdfFetcher : IKeyedInvoicePdfFetcher
     public EhoadonInvoicePdfFetcher(ILoggerFactory loggerFactory)
     {
         _logger = loggerFactory.CreateLogger(nameof(EhoadonInvoicePdfFetcher));
+    }
+
+    public Task<InvoicePdfResult> AcquirePdfAsync(InvoiceContentContext context, CancellationToken cancellationToken = default)
+    {
+        // BKAV 0101360697: bắt buộc lấy InvoiceGUID từ XML (DLHDon/@Id).
+        var invoiceId = EhoadonInvoiceIdParsing.GetInvoiceIdFromPayload(context.ContentForFetcher);
+        if (string.IsNullOrWhiteSpace(invoiceId))
+        {
+            _logger.LogWarning("Ehoadon PDF: XML không có DLHDon/@Id.");
+            return Task.FromResult<InvoicePdfResult>(new InvoicePdfResult.Failure(
+                "XML BKAV thiếu DLHDon/@Id (InvoiceGUID)."));
+        }
+
+        var pseudoPayload = $"{{\"id\":\"{invoiceId}\"}}";
+        return FetchPdfAsync(pseudoPayload, cancellationToken);
     }
 
     public async Task<InvoicePdfResult> FetchPdfAsync(string payloadJson, CancellationToken cancellationToken = default)
@@ -59,7 +74,7 @@ public sealed class EhoadonInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
             var options = new LaunchOptions
             {
-                Headless = false,
+                Headless = true,
                 ExecutablePath = installedBrowser.GetExecutablePath(),
                 Args = new[] { "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage" }
             };
