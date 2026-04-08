@@ -77,6 +77,8 @@ public class AppBootstrapper : PrismBootstrapper
         containerRegistry.Register<EinvoiceInvoicePdfFetcher>();
         containerRegistry.Register<MyinvoiceInvoicePdfFetcher>();
         containerRegistry.Register<VietinvoiceInvoicePdfFetcher>();
+        containerRegistry.Register<ThegioididongInvoicePdfFetcher>();
+        containerRegistry.Register<EhoadonNetInvoicePdfFetcher>();
         containerRegistry.Register<MerchantVnptInvoiceFetcher>();
         containerRegistry.Register<GrabInvoicePdfFetcher>();
         containerRegistry.Register<SesGroupInvoicePdfFetcher>();
@@ -98,6 +100,8 @@ public class AppBootstrapper : PrismBootstrapper
                 new HtInvoiceLookupRule(),
                 new MeinvoiceInvoiceLookupRule(),
                 new VietinvoiceLookupRule(),
+                new ThegioididongLookupRule(),
+                new EhoadonNetLookupRule(),
                 new ViettelInvoiceLookupRule(),
             };
             return new InvoiceLookupCatalog(resolver, rules, lf);

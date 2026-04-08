@@ -75,6 +75,14 @@ File này chỉ để **tham khảo cho lập trình viên** khi thêm/sửa PDF
   - Tra cứu: `https://tracuuhoadon.vietinvoice.vn/`  
   - Fetcher: `VietinvoiceInvoicePdfFetcher` – dùng trường `Mã tra cứu` từ payload.
 
+- **0306731335** – thegioididong  
+  - Tra cứu: `https://hddt.thegioididong.com/`  
+  - Fetcher: `ThegioididongInvoicePdfFetcher` – dùng SĐT người mua + số hóa đơn/mã tra cứu, captcha, tải HĐ chuyển đổi (ZIP) rồi bóc PDF.
+
+- **0306784030** – ehoadon.net  
+  - Tra cứu: `https://{MST-nguoi-ban}.ehoadon.net/look-up-invoice`  
+  - Fetcher: `EhoadonNetInvoicePdfFetcher` – chọn tra cứu theo tệp XML, upload XML, click tải PDF (hoặc bóc PDF từ ZIP).
+
 ### NCC theo MST người bán (`nbmst` / SellerTaxCode)
 
 Những nhà cung cấp này được chọn **theo MST người bán**, không chỉ theo `msttcgp`.

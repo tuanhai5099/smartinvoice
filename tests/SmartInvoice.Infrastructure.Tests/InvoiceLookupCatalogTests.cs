@@ -22,6 +22,8 @@ public sealed class InvoiceLookupCatalogTests
         new HtInvoiceLookupRule(),
         new MeinvoiceInvoiceLookupRule(),
         new VietinvoiceLookupRule(),
+        new ThegioididongLookupRule(),
+        new EhoadonNetLookupRule(),
         new ViettelInvoiceLookupRule(),
     ];
 
@@ -176,5 +178,55 @@ public sealed class InvoiceLookupCatalogTests
         Assert.Equal("0106870211", s.ProviderKey);
         Assert.Equal("WB4C4K99Q01I", s.SecretCode);
         Assert.Contains("tracuuhoadon.vietinvoice.vn", s.SearchUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Resolve_ThegioididongPayload_ReturnsTgddSuggestion()
+    {
+        var resolver = new StubResolver
+        {
+            Metadata = _ => new InvoicePdfProviderMetadata(
+                "0306731335",
+                false,
+                false,
+                "0306731335",
+                "0306731335",
+                "0306731335",
+                "ThegioididongInvoicePdfFetcher")
+        };
+        var catalog = CreateCatalog(resolver);
+        const string json = """
+            [{"shdon":224,"cttkhac":[{"ttruong":"Điện thoại người mua","dlieu":"0901234567"}]}]
+            """;
+        var ctx = new InvoiceContentContext(json, json, "0306731335", "0306731335");
+        var s = catalog.Resolve(ctx);
+        Assert.NotNull(s);
+        Assert.Equal("0306731335", s.ProviderKey);
+        Assert.Equal("224", s.SecretCode);
+        Assert.Contains("hddt.thegioididong.com", s.SearchUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Resolve_EhoadonNetPayload_ReturnsSellerBasedLookupUrl()
+    {
+        var resolver = new StubResolver
+        {
+            Metadata = _ => new InvoicePdfProviderMetadata(
+                "0306784030",
+                true,
+                true,
+                "0306784030",
+                "0301234567",
+                "0306784030",
+                "EhoadonNetInvoicePdfFetcher")
+        };
+        var catalog = CreateCatalog(resolver);
+        const string json = """[{"nbmst":"0301234567"}]""";
+        var ctx = new InvoiceContentContext(json, json, "0301234567", "0306784030");
+        var s = catalog.Resolve(ctx);
+        Assert.NotNull(s);
+        Assert.Equal("0306784030", s.ProviderKey);
+        Assert.Equal("0301234567", s.SellerTaxCode);
+        Assert.Contains("0301234567.ehoadon.net/look-up-invoice", s.SearchUrl, StringComparison.OrdinalIgnoreCase);
     }
 }
