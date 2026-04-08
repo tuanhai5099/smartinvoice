@@ -12,7 +12,7 @@ public sealed class InvoicePdfServiceXmlFirstTests
     private static readonly Guid CompanyId = Guid.NewGuid();
 
     [Fact]
-    public async Task GetPdfByExternalId_UsesXml_WhenExistingXmlFound()
+    public async Task GetPdfByExternalId_UsesJson_WhenProviderDoesNotRequireXml_EvenIfXmlExists()
     {
         var orchestrator = new StubOrchestrator(new InvoicePdfResult.Success([1, 2, 3], "a.pdf"));
         var resolver = new StubResolver(requiresXml: false);
@@ -28,8 +28,8 @@ public sealed class InvoicePdfServiceXmlFirstTests
         var success = Assert.IsType<InvoicePdfResult.Success>(result);
         Assert.Equal("a.pdf", success.SuggestedFileName);
         Assert.NotNull(orchestrator.LastContext);
-        Assert.Equal(InvoiceFetcherContentKind.Xml, orchestrator.LastContext!.ContentKind);
-        Assert.Equal("<xml>ok</xml>", orchestrator.LastContext.ContentForFetcher);
+        Assert.Equal(InvoiceFetcherContentKind.Json, orchestrator.LastContext!.ContentKind);
+        Assert.Equal(orchestrator.LastContext.InvoiceJsonPayload, orchestrator.LastContext.ContentForFetcher);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class InvoicePdfServiceXmlFirstTests
     }
 
     [Fact]
-    public async Task GetPdfByExternalId_FailsEarly_WhenXmlPreparationFails_EvenProviderNotRequireXml()
+    public async Task GetPdfByExternalId_ContinuesWithJson_WhenXmlPreparationFails_AndProviderNotRequireXml()
     {
         var orchestrator = new StubOrchestrator(new InvoicePdfResult.Success([5], "c.pdf"));
         var resolver = new StubResolver(requiresXml: false);
@@ -65,8 +65,9 @@ public sealed class InvoicePdfServiceXmlFirstTests
         var service = CreateService(orchestrator, resolver, xmlPrep);
 
         var result = await service.GetPdfForInvoiceByExternalIdAsync(CompanyId, "inv-1");
-        Assert.IsType<InvoicePdfResult.Failure>(result);
-        Assert.Null(orchestrator.LastContext);
+        Assert.IsType<InvoicePdfResult.Success>(result);
+        Assert.NotNull(orchestrator.LastContext);
+        Assert.Equal(InvoiceFetcherContentKind.Json, orchestrator.LastContext!.ContentKind);
     }
 
     [Fact]

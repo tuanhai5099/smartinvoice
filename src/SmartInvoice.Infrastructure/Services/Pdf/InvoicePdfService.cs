@@ -163,6 +163,21 @@ public sealed class InvoicePdfService : IInvoicePdfService
     {
         var json = invoice.PayloadJson!;
         var providerKey = metadata.ProviderTaxCode ?? GetProviderKeyFromPayload(json) ?? invoice.ProviderTaxCode;
+
+        // Mặc định truyền JSON payload; chỉ fetcher khai báo RequiresXml mới dùng XML.
+        if (!metadata.RequiresXml)
+        {
+            return new InvoiceContentContext(
+                json,
+                json,
+                invoice.NbMst,
+                providerKey,
+                companyId,
+                InvoiceFetcherContentKind.Json,
+                false,
+                null);
+        }
+
         var xmlPreparation = await _xmlPreparationService
             .PrepareXmlForInvoiceAsync(companyId, invoice, cancellationToken)
             .ConfigureAwait(false);
@@ -190,7 +205,7 @@ public sealed class InvoicePdfService : IInvoicePdfService
             ? "Không tìm thấy XML"
             : xmlPreparation.FailureReason;
         _logger.LogInformation(
-            "PDF XML-first: từ chối fallback JSON cho invoice {ExternalId}. Provider={ProviderTaxCode}, Fetcher={FetcherType}, XmlReason={Reason}",
+            "PDF XML-required: không thể chuẩn bị XML cho invoice {ExternalId}. Provider={ProviderTaxCode}, Fetcher={FetcherType}, XmlReason={Reason}",
             invoice.ExternalId,
             metadata.ProviderTaxCode ?? providerKey ?? "(null)",
             metadata.FetcherTypeName ?? "(unknown)",

@@ -59,7 +59,7 @@ public sealed class EhoadonInvoicePdfFetcher : IKeyedInvoicePdfFetcher
 
             var options = new LaunchOptions
             {
-                Headless = true,
+                Headless = false,
                 ExecutablePath = installedBrowser.GetExecutablePath(),
                 Args = new[] { "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage" }
             };

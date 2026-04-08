@@ -207,6 +207,30 @@ public sealed class InvoiceLookupCatalogTests
     }
 
     [Fact]
+    public void Resolve_MeinvoicePayload_TtkhacMaGiaoDich_ReturnsTransactionId()
+    {
+        var resolver = new StubResolver
+        {
+            Metadata = _ => new InvoicePdfProviderMetadata(
+                "0101243150",
+                false,
+                false,
+                "0101243150",
+                "0311111111",
+                "0101243150",
+                "MeinvoiceInvoicePdfFetcher")
+        };
+        var catalog = CreateCatalog(resolver);
+        const string json = """
+            [{"ttkhac":[{"ttchung":[{"ttruong":"Mã giao dịch","dlieu":"TXN-123"}]}]}]
+            """;
+        var ctx = new InvoiceContentContext(json, json, "0311111111", "0101243150");
+        var s = catalog.Resolve(ctx);
+        Assert.NotNull(s);
+        Assert.Equal("TXN-123", s.SecretCode);
+    }
+
+    [Fact]
     public void Resolve_EhoadonNetPayload_ReturnsSellerBasedLookupUrl()
     {
         var resolver = new StubResolver
